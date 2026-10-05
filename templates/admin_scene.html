@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Training image · TrajLab admin</title>
+<link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body class="admin">
+{% set active = 'images' %}{% include "_admin_nav.html" %}
+<main class="admin-main">
+  <div class="row" style="justify-content:space-between;margin-bottom:.8rem">
+    <div class="row">
+      <a class="btn btn-quiet" href="/admin#images">All training images</a>
+      <a class="btn" id="prev-scene" hidden>Previous</a>
+      <a class="btn" id="next-scene" hidden>Next</a>
+    </div>
+    <div style="flex:1;min-width:200px">
+      <h2 id="scene-title" style="margin:0"></h2>
+      <div class="tiny muted">Folder <code id="folder"></code></div>
+    </div>
+    <label class="check"><input type="checkbox" id="scene-active"><span>Shown to participants</span></label>
+  </div>
+
+  <div class="scene-layout">
+    <div>
+      <div class="stage">
+        <div id="stage-host"></div>
+        <div class="stage-tools">
+          <div class="seg seg-dark" id="mode-seg" role="group" aria-label="What clicking the image does">
+            <button type="button" data-mode="results" aria-pressed="true">Results</button>
+            <button type="button" data-mode="anchors" aria-pressed="false">Start &amp; goal</button>
+            <button type="button" data-mode="draw" aria-pressed="false">Add a path</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" id="panel-results" style="margin-top:1rem">
+        <div class="row" style="align-items:center">
+          <label class="check"><input type="checkbox" id="show-humans" checked><span>People's paths</span></label>
+          <label class="check"><input type="checkbox" id="show-compiled" checked><span>Compiled path and spread</span></label>
+          <label class="check"><input type="checkbox" id="show-ai" checked><span>VLM paths</span></label>
+          <div class="seg" id="role-seg" style="margin-left:auto"><button type="button" data-v="" aria-pressed="true">Everyone</button><button type="button" data-v="team" aria-pressed="false">Team</button><button type="button" data-v="survey" aria-pressed="false">Survey</button></div>
+        </div>
+        <div class="row" style="margin-top:.6rem">
+          <label for="tau" class="small" style="font-weight:600">Same route if paths stay within</label>
+          <input type="range" id="tau" min="2" max="30" step="0.5" style="flex:1;min-width:140px">
+          <span id="tau-val" class="num small" style="width:9ch"></span>
+          <button class="btn" id="tau-save" hidden>Make default</button>
+        </div>
+        <div class="legend" id="legend"></div>
+      </div>
+
+      <div class="card" id="panel-anchors" style="margin-top:1rem" hidden>
+        <p class="small" style="margin-bottom:.5rem">Drag the robot or the flag, or choose what a click places. Changes save immediately. Paths already drawn keep the start and goal they were drawn with.</p>
+        <div class="row">
+          <div class="seg" id="anchor-seg">
+            <button type="button" data-t="start" aria-pressed="false">Click places the robot</button>
+            <button type="button" data-t="goal" aria-pressed="true">Click places the goal</button>
+          </div>
+          <button class="btn btn-danger" id="remove-goal">Remove goal</button>
+        </div>
+      </div>
+
+      <div class="card" id="panel-draw" style="margin-top:1rem" hidden>
+        <p class="small" style="margin-bottom:.6rem">Click to place points, exactly like participants do. Use this for a baseline planner, a path the team agreed on, or a VLM answer typed in by hand.</p>
+        <div class="row">
+          <label class="field" style="flex:1;min-width:160px"><span>Model or method</span><input type="text" id="c-model" placeholder="e.g. shortest-path, fixed-cost, team-consensus" list="model-list"><datalist id="model-list"></datalist></label>
+          <label class="field" style="flex:1;min-width:140px"><span>Source</span><select id="c-source">
+            <option value="baseline">Baseline planner</option><option value="vlm">VLM</option><option value="team">Team consensus</option><option value="other">Other</option></select></label>
+        </div>
+        <label class="field"><span>Note (optional)</span><input type="text" id="c-rationale" placeholder="Why this path?"></label>
+        <div class="row">
+          <div class="seg" id="c-style"><button type="button" data-v="line" aria-pressed="false">Straight lines</button><button type="button" data-v="curve" aria-pressed="true">Curves</button></div>
+          <label class="check"><input type="checkbox" id="c-wait"><span>This method chose to wait</span></label>
+          <label class="check"><input type="checkbox" id="c-override"><span>Use as this image's compiled path (replaces the automatic one)</span></label>
+        </div>
+        <div class="row" style="margin-top:.4rem">
+          <button class="btn btn-primary" id="c-save">Save path</button>
+          <button class="btn" id="c-undo">Undo</button>
+          <button class="btn" id="c-clear">Clear</button>
+          <span class="small form-error" id="c-err"></span>
+        </div>
+      </div>
+    </div>
+
+    <aside>
+      <div class="card"><h3>Agreement</h3><div id="summary"><p class="muted small">Loading…</p></div></div>
+      <div class="card"><h3>Rules people said they bent</h3><div id="norms"></div></div>
+      <form class="card" id="meta-form">
+        <h3>Image details</h3>
+        <label class="field"><span>Title</span><input type="text" name="title"></label>
+        <div class="row">
+          <label class="field" style="flex:1"><span>Scenario type</span><input type="text" name="scenario"></label>
+          <label class="field" style="width:130px"><span>Split</span><select name="split">
+            <option value="">None</option><option value="train">Train</option><option value="test">Test</option></select></label>
+        </div>
+        <label class="field"><span>Instructions for this image</span><textarea name="prompt" rows="3" placeholder="Leave empty to use the default instructions"></textarea></label>
+        <label class="field"><span>Private notes</span><textarea name="notes" rows="2"></textarea></label>
+        <div id="video-tools" hidden>
+          <label class="field"><span>Decision moment</span></label>
+          <video id="admin-video" controls muted playsinline style="width:100%;border-radius:8px;background:#000"></video>
+          <p class="small muted">Participants watch the clip up to this moment, then draw on that frame.</p>
+          <button class="btn" type="button" id="use-frame">Use the current frame</button>
+          <span class="small num" id="dtime"></span>
+        </div>
+        <div class="row" style="margin-top:.8rem;justify-content:space-between">
+          <button class="btn btn-primary" type="submit">Save details</button>
+          <button class="btn btn-danger" type="button" id="delete-scene">Delete image</button>
+        </div>
+      </form>
+    </aside>
+  </div>
+
+  <div class="card" style="margin-top:.5rem">
+    <h3>How similar people's paths are</h3>
+    <p class="small muted">Each cell compares two people's paths: 100% identical, 50% right at the same-route threshold. Grouped by route; outliers are left out when they're excluded from the vote. Hover a cell for the Fréchet distance.</p>
+    <div class="heatmap" id="heatmap"></div>
+  </div>
+
+  <div class="card">
+    <h3>VLM images of this photo</h3>
+    <div class="vlm-grid" id="vlm-grid"></div>
+  </div>
+
+  <div class="card">
+    <h3>How typical is each path?</h3>
+    <p class="small muted" style="margin-bottom:.4rem">Each dot is one person: their average Fréchet distance to everyone else. Diamonds are VLM paths with coordinates. Further left means closer to the crowd.</p>
+    <div class="chart" id="strip"></div>
+  </div>
+
+  <div class="card">
+    <h3>Annotations</h3>
+    <div class="table-wrap"><table class="data" id="draw-table"></table></div>
+  </div>
+</main>
+<script>window.SCENE_ID = {{ scene_id | tojson }};</script>
+<script src="{{ url_for('static', filename='js/geometry.js') }}"></script>
+<script src="{{ url_for('static', filename='js/pathcanvas.js') }}"></script>
+<script src="{{ url_for('static', filename='js/admin_common.js') }}"></script>
+<script src="{{ url_for('static', filename='js/admin_scene.js') }}"></script>
+</body>
+</html>

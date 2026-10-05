@@ -1,0 +1,20 @@
+# Render blueprint: https://render.com/docs/blueprint-spec
+# A persistent disk is required, otherwise every redeploy or restart wipes the collected data.
+# Disks need a paid instance type on Render.
+services:
+  - type: web
+    name: trajlab
+    runtime: docker
+    plan: starter
+    healthCheckPath: /healthz
+    disk:
+      name: trajlab-data
+      mountPath: /data
+      sizeGB: 2
+    envVars:
+      - key: DATA_DIR
+        value: /data
+      - key: ADMIN_PASSWORD
+        sync: false        # you'll be asked for it when you create the service
+      - key: SECRET_KEY
+        generateValue: true

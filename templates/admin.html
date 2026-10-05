@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TrajLab admin</title>
+<link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body class="admin">
+{% include "_admin_nav.html" %}
+<main class="admin-main" id="main">
+
+<section class="admin-section" id="sec-overview" hidden>
+  <div id="pw-warn" class="alert alert-warn" hidden>The admin password is still <code>changeme</code>. Set the <code>ADMIN_PASSWORD</code> environment variable before you share this site outside your team.</div>
+  <div class="stats" id="stats"></div>
+  <div class="grid-2">
+    <div class="card">
+      <h3>Share the study</h3>
+      <label class="field"><span id="survey-label">Survey participants</span>
+        <div class="input-row"><input type="text" id="link-survey" class="share-url" readonly><button class="btn" data-copy="link-survey">Copy</button></div></label>
+      <label class="field"><span>Research team (every photo; the access code is filled in for them)</span>
+        <div class="input-row"><input type="text" id="link-team" class="share-url" readonly><button class="btn" data-copy="link-team">Copy</button></div></label>
+      <p class="small muted" style="margin:0">Team access code: <b id="team-code" class="share-url"></b> · change it under <a href="#settings">Settings</a>.
+        Anyone signing up as a team member without it is turned away.</p>
+      <details class="optional" style="margin-top:.6rem"><summary class="small">More link options</summary>
+        <div class="row" style="margin-top:.5rem">
+          <label class="field" style="flex:1;min-width:160px;margin:0"><span>Cohort label (stored with each person)</span><input type="text" id="share-group" placeholder="e.g. class-section-2"></label>
+          <label class="check" style="margin-top:1.4rem"><input type="checkbox" id="share-kiosk"><span>Kiosk mode (shared tablet)</span></label>
+        </div>
+      </details>
+    </div>
+    <div class="card">
+      <h3>How a study runs</h3>
+      <ol class="small steps">
+        <li>Upload training images under <a href="#images">Training images</a>, then open each one to place the robot's start and a goal flag.</li>
+        <li>Share the team link with your team and the survey link with everyone else. Team members draw on every image; survey participants on <span class="n-survey">5</span> random ones.</li>
+        <li>Each submitted path is saved as an annotated image in that photo's folder, and the site compares the paths, flags outliers and compiles one trajectory per photo.</li>
+        <li>Upload the images your VLM drew under <a href="#vlm">VLM images</a>. Each person rates <span class="n-rate">10</span> of them after drawing.</li>
+        <li>Compare models under <a href="#results">Results</a> and download everything under <a href="#data">Data</a>.</li>
+      </ol>
+      <p class="small muted" style="margin:.4rem 0 0">Dataset folder on the server: <code id="dataset-dir"></code></p>
+    </div>
+  </div>
+</section>
+
+<section class="admin-section" id="sec-images" hidden>
+  <h2>Training images</h2>
+  <div class="card">
+    <div class="drop" id="drop" tabindex="0" role="button" aria-label="Upload training images">
+      <b>Drop photos, a .zip of photos, or short clips here</b>, or click to choose files.<br>
+      <span class="small muted">JPG, PNG or WebP. For a clip (MP4, WebM), the last frame becomes the moment people draw on; you can change it later.</span>
+      <input type="file" id="file-input" multiple accept="image/*,.zip,application/zip,video/mp4,video/webm,video/quicktime" hidden>
+    </div>
+    <div class="row" style="margin-top:.75rem">
+      <label class="field" style="margin:0;flex:1;min-width:220px"><span>Scenario type for this upload (optional)</span>
+        <input type="text" id="upload-scenario" placeholder="e.g. crowded sidewalk, queue, group on lawn" list="scenario-list"></label>
+      <datalist id="scenario-list"></datalist>
+    </div>
+    <p class="small" id="upload-status" style="margin:.6rem 0 0"></p>
+  </div>
+  <div class="row" style="margin-bottom:.6rem">
+    <span class="small muted">Agreement among</span>
+    <div class="seg" id="img-role"><button type="button" data-v="" aria-pressed="true">Everyone</button><button type="button" data-v="team" aria-pressed="false">Team</button><button type="button" data-v="survey" aria-pressed="false">Survey</button></div>
+  </div>
+  <div class="table-wrap"><table class="data" id="scene-table"></table></div>
+</section>
+
+<section class="admin-section" id="sec-vlm" hidden>
+  <h2>VLM images</h2>
+  <div class="card">
+    <h3>Add images drawn by a VLM</h3>
+    <div class="row" style="align-items:flex-end">
+      <label class="field" style="flex:1;min-width:200px;margin:0"><span>Model that drew them</span>
+        <input type="text" id="vlm-model" placeholder="e.g. gpt-4o-fewshot" list="model-list"><datalist id="model-list"></datalist></label>
+      <label class="field" style="width:200px;margin:0"><span>Source</span><select id="vlm-source">
+        <option value="vlm">VLM</option><option value="baseline">Baseline planner</option><option value="other">Other</option></select></label>
+    </div>
+    <div class="drop" id="vlm-drop" tabindex="0" role="button" aria-label="Choose VLM images" style="margin-top:.8rem">
+      <b>Drop the VLM's output images here</b>, or click to choose them.<br>
+      <span class="small muted">Each one is matched to its training image by file name (for example <code>welch_crowd_gpt4o.png</code> matches <code>welch_crowd.jpg</code>). Check the matches before uploading.</span>
+      <input type="file" id="vlm-input" multiple accept="image/*" hidden>
+    </div>
+    <div id="vlm-preview" hidden>
+      <div class="table-wrap" style="margin-top:.8rem;max-height:50vh"><table class="data" id="vlm-match"></table></div>
+      <div class="row" style="margin-top:.8rem"><button class="btn btn-primary" id="vlm-upload">Upload</button><button class="btn btn-quiet" id="vlm-cancel">Cancel</button><span class="small" id="vlm-status"></span></div>
+    </div>
+  </div>
+  <div class="row" style="margin-bottom:.6rem">
+    <label class="field" style="margin:0"><span class="small">Model</span><select id="vlm-filter"></select></label>
+    <span class="small muted" id="vlm-count" style="margin-top:1.3rem"></span>
+  </div>
+  <div class="table-wrap"><table class="data" id="vlm-table"></table></div>
+</section>
+
+<section class="admin-section" id="sec-results" hidden>
+  <h2>Results</h2>
+  <p class="muted" style="max-width:80ch">How people rated each model's paths, and, for paths with coordinates (traced or uploaded as JSON), how closely they match what people drew.</p>
+  <div class="row" style="margin-bottom:1rem">
+    <span class="small muted">Raters</span>
+    <div class="seg" id="res-role"><button type="button" data-v="" aria-pressed="true">Everyone</button><button type="button" data-v="team" aria-pressed="false">Team</button><button type="button" data-v="survey" aria-pressed="false">Survey</button></div>
+    <span class="small muted" id="res-n"></span>
+  </div>
+  <div class="card"><h3>Questionnaire, mean per model</h3>
+    <p class="small muted">Each VLM image counts once (the mean of its ratings). Brackets: 95% bootstrap interval over images. Last row: Krippendorff's alpha, how consistently different raters answered (1 = perfect agreement, 0 = chance; above about 0.67 is usually treated as acceptable).</p>
+    <div class="table-wrap"><table class="data" id="res-table"></table></div>
+  </div>
+  <div class="card"><h3>Scale answers at a glance</h3><p class="small muted">Dot = mean, line = 95% interval. Labels name the model.</p><div class="chart" id="res-chart"></div></div>
+  <div class="card"><h3>Path agreement with people</h3>
+    <p class="small muted">Only VLM outputs with coordinates. Trace a VLM image's path on its detail page to include it.</p>
+    <div class="table-wrap"><table class="data" id="path-table"></table></div>
+    <dl class="help-list small">
+      <dt>Same route as people</dt><dd>Share of human responses that chose the same route (or also waited). 95% bootstrap interval in brackets.</dd>
+      <dt>Fréchet to compiled path</dt><dd>Largest gap from the compiled human trajectory, as % of the image diagonal. Lower is better.</dd>
+      <dt>Similarity</dt><dd>1 / (1 + Fréchet ÷ same-route threshold): 100% identical, 50% right at the same-route threshold.</dd>
+      <dt>Human percentile</dt><dd>How typical the path is among people: 50% = as close to the crowd as an average person.</dd>
+    </dl>
+  </div>
+</section>
+
+<section class="admin-section" id="sec-people" hidden>
+  <h2>Participants</h2>
+  <p class="muted">Untick <b>Use</b> to leave someone out of every analysis (nothing is deleted). Delete removes a person and all their answers, for example if they withdraw consent.</p>
+  <div class="row" style="margin-bottom:.6rem">
+    <div class="seg" id="people-role"><button type="button" data-v="" aria-pressed="true">Everyone</button><button type="button" data-v="team" aria-pressed="false">Team</button><button type="button" data-v="survey" aria-pressed="false">Survey</button></div>
+    <input type="text" id="people-search" placeholder="Search name, email or code" style="max-width:280px">
+  </div>
+  <div class="table-wrap"><table class="data" id="people-table"></table></div>
+</section>
+
+<section class="admin-section" id="sec-data" hidden>
+  <h2>Data</h2>
+  <div class="grid-2">
+    <div class="card">
+      <h3>Download the dataset</h3>
+      <p class="small muted">One folder per training image (original, every annotated image, VLM images, compiled path, similarity matrix, paths.json), plus CSV tables of annotations, VLM ratings, model results and participants.</p>
+      <div class="row"><a class="btn btn-primary" href="/api/admin/export.zip">Download everything</a>
+        <a class="btn" href="/api/admin/export.zip?anonymize=1">Without names and emails</a>
+        <a class="btn" href="/api/admin/export.zip?media=0">Tables only</a></div>
+      <p class="small muted" style="margin:.8rem 0 0">The same folders are kept up to date on the server at <code id="dataset-dir-2"></code>.
+        <button class="btn btn-quiet small" id="rebuild">Rebuild folders</button></p>
+    </div>
+    <div class="card">
+      <h3>Merge data from another copy</h3>
+      <p class="small muted">Collected on several laptops? Download each copy's dataset (Download everything) and upload it here. Records are matched by ID, so nothing is duplicated.</p>
+      <input type="file" id="merge-file" accept=".zip">
+      <p class="small" id="merge-status"></p>
+    </div>
+    <div class="card">
+      <h3>VLM paths as coordinates</h3>
+      <p class="small muted">If your pipeline outputs coordinates, upload them as JSON instead of (or as well as) images: they're compared with human paths directly, and drawn as images for rating. Points are normalized image coordinates <code>[x, y]</code>, 0–1 from the top-left.</p>
+<pre><code>[{"scene_title": "welch crowd", "model": "gpt-4o-fewshot",
+  "decision": "path", "points": [[0.5,0.96],[0.38,0.6],[0.52,0.3]],
+  "style": "curve", "confidence": 0.7, "norms": ["terrain"],
+  "rationale": "Grass is empty; sidewalk is blocked."}]</code></pre>
+      <input type="file" id="cand-file" accept=".json,application/json">
+      <p class="small" id="cand-status"></p>
+    </div>
+    <div class="card">
+      <h3>Pipeline API</h3>
+      <p class="small muted">For scripts. Authenticate with <code>API_TOKEN</code> (defaults to the admin password).</p>
+<pre><code id="api-example"></code></pre>
+    </div>
+  </div>
+</section>
+
+<section class="admin-section" id="sec-settings" hidden>
+  <h2>Settings</h2>
+  <form id="settings-form" class="grid-2">
+    <div class="card">
+      <h3>What participants see</h3>
+      <label class="field"><span>Study title</span><input type="text" name="study_title"></label>
+      <label class="field"><span>Subtitle</span><input type="text" name="study_subtitle"></label>
+      <label class="field"><span>Consent and information text</span><textarea name="consent_text" rows="8"></textarea></label>
+      <label class="field"><span>Drawing instructions (a photo can override this)</span><textarea name="default_prompt" rows="4"></textarea></label>
+      <label class="field"><span>Shown before the rating part</span><textarea name="rating_intro" rows="3"></textarea></label>
+      <label class="field"><span>Shown above each rating</span><input type="text" name="rating_prompt"></label>
+      <label class="field"><span>Message on the last screen</span><input type="text" name="completion_message"></label>
+      <label class="check"><input type="checkbox" name="require_email"><span>Email is required</span></label>
+      <label class="check"><input type="checkbox" name="ask_demographics"><span>Ask optional questions about the participant</span></label>
+    </div>
+    <div class="card">
+      <h3>Who does what</h3>
+      <div class="row">
+        <label class="field" style="flex:1"><span>Photos per survey participant</span><input type="number" name="survey_draw_count" min="1"></label>
+        <label class="field" style="flex:1"><span>Photos per team member (0 = all)</span><input type="number" name="team_draw_count" min="0"></label>
+      </div>
+      <div class="row">
+        <label class="field" style="flex:1"><span>VLM images each person rates</span><input type="number" name="rate_per_participant" min="0"></label>
+        <label class="field" style="flex:1"><span>Of those, hidden human-consensus controls</span><input type="number" name="consensus_controls" min="0"></label>
+      </div>
+      <label class="field"><span>Team access code</span><input type="text" name="team_code" class="share-url" autocomplete="off"></label>
+      <div class="row">
+        <label class="field" style="flex:1"><span>Lines start as</span><select name="default_line_style"><option value="curve">Curves</option><option value="line">Straight lines</option></select></label>
+        <label class="field" style="flex:1"><span>Rating shows</span><select name="rating_display">
+          <option value="original">The VLM's own image</option><option value="uniform">Re-drawn in one style when coordinates exist</option></select></label>
+      </div>
+      <p class="small muted">Photos and VLM images are handed out so the ones with the fewest responses go first, in a shuffled order. Each rating set avoids repeating a photo where possible.</p>
+      <h3 style="margin-top:1.2rem">Rating questions</h3>
+      <p class="small muted">One per line: <code>key | yesno | question</code> or <code>key | 1-7 | question | low label | high label</code>. Keep keys stable once ratings are coming in.</p>
+      <textarea name="questions" rows="9" class="share-url"></textarea>
+      <label class="check"><input type="checkbox" name="ask_norms_in_rating"><span>Also ask which unwritten rules the path breaks</span></label>
+      <h3 style="margin-top:1.2rem">Unwritten rules (norm tags)</h3>
+      <p class="small muted">One per line as <code>key | label</code>.</p>
+      <textarea name="norms" rows="8" class="share-url"></textarea>
+    </div>
+    <div class="card">
+      <h3>Comparing and combining paths</h3>
+      <div class="row">
+        <label class="field" style="flex:1"><span>Same route if within (% of image diagonal)</span><input type="number" name="cluster_threshold" step="0.5" min="1" max="50"></label>
+        <label class="field" style="flex:1"><span>Ambiguous if top choice under (%)</span><input type="number" name="ambiguity_threshold" step="1" min="1" max="100"></label>
+      </div>
+      <div class="row">
+        <label class="field" style="flex:1"><span>Compiled trajectory</span><select name="compiled_method">
+          <option value="mean">Robust average of the most popular route</option><option value="medoid">Most central real path of that route</option></select></label>
+        <label class="field" style="flex:1"><span>Outlier paths</span><select name="exclude_outliers">
+          <option value="true">Leave out of the vote and the compiled path</option><option value="false">Flag only</option></select></label>
+      </div>
+      <div class="row">
+        <label class="field" style="flex:1"><span>Count a route as an option at (% of responses)</span><input type="number" name="min_mode_share" step="1" min="1" max="100"></label>
+        <label class="field" style="flex:1"><span>Flag drawings faster than (seconds)</span><input type="number" name="fast_response_ms" step="0.5" min="0"></label>
+      </div>
+    </div>
+    <div style="grid-column:1/-1"><button class="btn btn-primary btn-big" type="submit">Save settings</button> <span id="settings-status" class="small form-error"></span></div>
+  </form>
+</section>
+
+</main>
+<script src="{{ url_for('static', filename='js/admin_common.js') }}"></script>
+<script src="{{ url_for('static', filename='js/admin.js') }}"></script>
+</body>
+</html>
