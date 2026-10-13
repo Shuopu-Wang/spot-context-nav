@@ -160,6 +160,23 @@ def test_rating_summary():
     assert s["groups"]["m1"]["acceptable"] == 0.75 and s["groups"]["m1"]["n_items"] == 2
 
 
+def test_ranking_summary_and_kendall_w():
+    ids = ["a", "b", "c"]
+    assert A.kendall_w([["a", "b", "c"]] * 4, ids) == 1.0
+    rows = [{"ranking": ["a", "b", "c"], "unacceptable": ["c"]},
+            {"ranking": ["b", "a", "c"], "unacceptable": ["c"]},
+            {"ranking": ["a", "c", "b"], "unacceptable": []}]
+    s = A.ranking_summary(ids, rows)
+    assert s["order"][0] == "a" and s["best"] == "a" and s["n_complete"] == 3
+    assert abs(s["paths"]["c"]["unacceptable_share"] - 2 / 3) < 1e-12
+    # best skips a top-scored path that most people called unacceptable
+    s = A.ranking_summary(ids, [{"ranking": ["a", "b", "c"], "unacceptable": ["a"]}] * 3)
+    assert s["top_overall"] == "a" and s["best"] == "b"
+    # a ranking made before path c existed still counts for a and b
+    s = A.ranking_summary(ids, [{"ranking": ["b", "a"], "unacceptable": []}])
+    assert s["paths"]["b"]["score"] == 1.0 and s["paths"]["c"]["n"] == 0 and s["n_complete"] == 0
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

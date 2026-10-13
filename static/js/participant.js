@@ -141,9 +141,9 @@
               <fieldset class="field role-pick">
                 <legend>How are you taking part?</legend>
                 <label class="role-card"><input type="radio" name="role" value="survey" ${TEAM_CODE ? "" : "checked"}>
-                  <span><b>Survey participant</b><span class="muted small">Draw paths on ${n} photos, then rate some AI paths.</span></span></label>
+                  <span><b>Survey participant</b><span class="muted small">${S.participant_task === "draw" ? "Draw paths on" : "Rank robot paths on"} ${n} photos.</span></span></label>
                 <label class="role-card"><input type="radio" name="role" value="team" ${TEAM_CODE ? "checked" : ""}>
-                  <span><b>Research team member</b><span class="muted small">Draw on every photo. Needs the team access code.</span></span></label>
+                  <span><b>Research team member</b><span class="muted small">${S.participant_task === "draw" ? "Draw on" : "Rank paths on"} every photo. Needs the team access code.</span></span></label>
               </fieldset>
               <label class="field" id="code-field" ${TEAM_CODE ? "" : "hidden"}><span>Team access code</span>
                 <input type="text" name="team_code" autocomplete="off" value="${esc(TEAM_CODE)}"></label>
@@ -191,7 +191,7 @@
   // ------------------------------------------------------------------ routing
   async function next() {
     const d = session.draw.findIndex((t) => !t.done);
-    if (d >= 0) return showDraw(session.draw[d]);
+    if (d >= 0) return session.draw[d].kind === "rank" ? showRank(session.draw[d]) : showDraw(session.draw[d]);
     if (session.rate === null) {             // rating set is assigned once drawing is finished
       session = await api(`/api/session/${session.participant_id}`);
       if (session.rate === null) session.rate = [];
@@ -441,6 +441,108 @@
           duration_ms: Math.round(performance.now() - t0), n_edits: canvas.edits,
           viewport: { w: window.innerWidth, h: window.innerHeight, img_w: canvas.wrap.clientWidth, dpr: window.devicePixelRatio },
         });
+        task.done = true;
+        next();
+      } catch (err) {
+        $("err").textContent = err.message + " Please try again.";
+        btn.disabled = false;
+      }
+    });
+  }
+
+  // ------------------------------------------------------------------ rank task
+  function showRank(task) {
+    const sc = task.scene, paths = task.paths;
+    const i = session.draw.indexOf(task) + 1, single = paths.length === 1;
+    const name = (p) => (p.decision === "wait" ? `Option ${p.letter}: the robot waits` : `Path ${p.letter}`);
+    mount(`
+      <section class="screen task-screen rank-screen">
+        <div class="task">
+          <div class="main">
+            <div class="stage"><div id="stage-host"></div>
+              <p class="stage-hint">Point at a path in the list to highlight it on the photo.</p></div>
+          </div>
+          <div class="side">
+            <form class="panel" id="rank-form" novalidate>
+              <p class="small muted" style="margin:0 0 .2rem">Photo ${i} of ${session.draw.length}</p>
+              <h2>${single ? "Is this path socially acceptable?" : "Which path is best?"}</h2>
+              <p class="prompt">${esc(sc.prompt || S.rank_prompt)}</p>
+              ${single ? "" : `<p class="q-title" style="margin:.8rem 0 .4rem">Tap the paths from best to worst</p>`}
+              <div class="rk-list" id="rk-list">${paths.map((p) => `
+                <div class="rk-card" data-id="${esc(p.id)}">
+                  <button type="button" class="rk-pick" ${single ? "disabled" : ""} aria-label="Rank ${esc(name(p))}">
+                    <span class="rk-rank" aria-hidden="true"></span>
+                    <span class="opt-chip" style="background:${p.color}">${esc(p.letter)}</span>
+                    <span class="rk-name">${esc(name(p))}</span>
+                  </button>
+                  <label class="rk-bad"><input type="checkbox" value="${esc(p.id)}"><span>Not socially acceptable</span></label>
+                </div>`).join("")}
+              </div>
+              ${single ? "" : `<div class="rk-summary"><span id="rk-order" class="small muted"></span>
+                <button type="button" class="btn btn-quiet small" id="rk-reset">Start over</button></div>`}
+              <label class="q" style="display:block"><span class="q-title">Anything we should know? <span class="muted" style="font-weight:400">(optional)</span></span>
+                <textarea name="comment" maxlength="2000" rows="2"></textarea></label>
+              <div class="submit-row sticky-submit">
+                <div class="form-error" id="err" role="alert"></div>
+                <button class="btn btn-primary btn-big btn-block" type="submit" id="submit">Submit and continue</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </section>`);
+    const $ = (id) => document.getElementById(id);
+    const mq = window.matchMedia("(max-width: 960px)");
+    canvas = new PathCanvas($("stage-host"), { imageUrl: sc.image_url, width: sc.width, height: sc.height, start: sc.start,
+      goal: sc.goal, editable: false, maxHeight: mq.matches ? "42vh" : "calc(100vh - 170px)" });
+    let ring = 0;
+    canvas.setOverlays(paths.map((p, k) => ({ id: p.id, points: p.points, segments: p.segments, style: p.style, kind: p.kind,
+      decision: p.decision, color: p.color, label: p.letter, arrows: true, width: 4,
+      ring: p.decision === "wait" ? ring++ : 0, labelAt: 0.35 + 0.12 * (k % 5) })));
+    const t0 = performance.now();
+    let order = single ? [paths[0].id] : [];
+    const form = $("rank-form");
+
+    function render() {
+      if (!single && order.length === paths.length - 1) order.push(paths.find((p) => !order.includes(p.id)).id);
+      form.querySelectorAll(".rk-card").forEach((card) => {
+        const r = order.indexOf(card.dataset.id);
+        card.classList.toggle("is-ranked", r >= 0);
+        card.querySelector(".rk-rank").textContent = r >= 0 ? String(r + 1) : "";
+        card.classList.toggle("is-bad", card.querySelector(".rk-bad input").checked);
+      });
+      if (!single) {
+        const lab = (id) => paths.find((p) => p.id === id).letter;
+        $("rk-order").textContent = order.length ? `Your order: ${order.map(lab).join(" › ")}. Tap a ranked path to undo from there.`
+                                                 : "Nothing ranked yet.";
+        $("rk-reset").hidden = !order.length;
+      }
+      if (order.length === paths.length) $("err").textContent = "";
+    }
+    form.querySelectorAll(".rk-card").forEach((card) => {
+      const id = card.dataset.id;
+      card.querySelector(".rk-pick").addEventListener("click", () => {
+        const r = order.indexOf(id);
+        if (r >= 0) order = order.slice(0, r); else order.push(id);   // un-ranking also clears the ranks after it
+        render();
+      });
+      card.querySelector(".rk-bad input").addEventListener("change", render);
+      card.addEventListener("mouseenter", () => canvas.highlight(id));
+      card.addEventListener("mouseleave", () => canvas.highlight(null));
+      card.addEventListener("focusin", () => canvas.highlight(id));
+      card.addEventListener("focusout", () => canvas.highlight(null));
+    });
+    if ($("rk-reset")) $("rk-reset").onclick = () => { order = []; render(); };
+    render();
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      if (order.length !== paths.length) { $("err").textContent = "Please rank every path, best first."; return; }
+      const bad = [...form.querySelectorAll(".rk-bad input:checked")].map((x) => x.value);
+      const btn = $("submit"); btn.disabled = true;
+      try {
+        await api("/api/rankings", { participant_id: session.participant_id, scene_id: sc.id, ranking: order,
+          unacceptable: bad, comment: form.comment.value.trim(), duration_ms: Math.round(performance.now() - t0),
+          shown: paths.map((p) => ({ id: p.id, letter: p.letter })) });
         task.done = true;
         next();
       } catch (err) {

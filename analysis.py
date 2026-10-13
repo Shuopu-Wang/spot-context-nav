@@ -760,3 +760,87 @@ def model_path_summary(scene_results: list[dict]) -> dict[str, dict]:
                 _spearman([a for a, _ in conf], [b for _, b in conf]) if conf else None,
         }
     return out
+
+
+# ---------------------------------------------------------------------------
+# Rankings of admin-drawn paths
+# ---------------------------------------------------------------------------
+
+def kendall_w(rankings: list[list], items: list) -> float | None:
+    """Kendall's coefficient of concordance for complete rankings (best first).
+
+    0 = no agreement between raters, 1 = everyone gave the identical order.
+    """
+    n, m = len(items), len(rankings)
+    if n < 2 or m < 2:
+        return None
+    pos = {it: i for i, it in enumerate(items)}
+    R = np.zeros(n)
+    for r in rankings:
+        for rank, it in enumerate(r, start=1):
+            R[pos[it]] += rank
+    S = float(((R - m * (n + 1) / 2.0) ** 2).sum())
+    return 12.0 * S / (m * m * (n ** 3 - n))
+
+
+def ranking_summary(path_ids: list, rankings: list[dict]) -> dict:
+    """Aggregate participants' rankings of the admin-drawn paths for one image.
+
+    path_ids: current candidate ids (paths drawn by the admins).
+    rankings: [{"ranking": [ids best -> worst], "unacceptable": [ids]}].
+    Rankings made before a path was added or deleted are used for the paths they contain:
+    each path's score is its normalized Borda score (1 = always ranked first, 0 = always last),
+    averaged over the rankings that include it. Kendall's W uses complete rankings only.
+    """
+    ids = list(path_ids)
+    idset = set(ids)
+    per = {i: {"n": 0, "borda": [], "pos": [], "first": 0, "last": 0, "unacceptable": 0} for i in ids}
+    complete = []
+    for r in rankings:
+        order = [x for x in (r.get("ranking") or []) if x in idset]
+        bad = set(r.get("unacceptable") or [])
+        k = len(order)
+        if k == 0:
+            continue
+        if set(order) == idset and len(order) == len(ids):
+            complete.append(order)
+        for p, x in enumerate(order):
+            d = per[x]
+            d["n"] += 1
+            d["borda"].append(1.0 if k == 1 else (k - 1 - p) / (k - 1))
+            d["pos"].append(p + 1)
+            d["first"] += p == 0
+            d["last"] += (p == k - 1 and k > 1)
+            d["unacceptable"] += x in bad
+    paths = {}
+    for i in ids:
+        d = per[i]
+        n = d["n"]
+        paths[i] = {
+            "n": n,
+            "score": float(np.mean(d["borda"])) if n else None,
+            "mean_rank": float(np.mean(d["pos"])) if n else None,
+            "first_share": d["first"] / n if n else None,
+            "last_share": d["last"] / n if n else None,
+            "unacceptable_share": d["unacceptable"] / n if n else None,
+        }
+    scored = [i for i in ids if paths[i]["score"] is not None]
+    order = sorted(scored, key=lambda i: (-paths[i]["score"], paths[i]["unacceptable_share"], i))
+    acceptable = [i for i in order if paths[i]["unacceptable_share"] < 0.5]
+    best = acceptable[0] if acceptable else None
+    for rank, i in enumerate(order, start=1):
+        paths[i]["overall_rank"] = rank
+    top_agree = None
+    if complete and order:
+        top_agree = sum(1 for r in complete if r[0] == order[0]) / len(complete)
+    return {
+        "n_rankings": len([r for r in rankings if r.get("ranking")]),
+        "n_complete": len(complete),
+        "order": order,
+        "best": best,
+        "top_overall": order[0] if order else None,
+        "all_unacceptable": bool(order) and best is None,
+        "kendall_w": kendall_w(complete, ids),
+        "top_agreement": top_agree,
+        "paths": paths,
+    }

@@ -31,7 +31,7 @@
           <div class="seg seg-dark" id="mode-seg" role="group" aria-label="What clicking the image does">
             <button type="button" data-mode="results" aria-pressed="true">Results</button>
             <button type="button" data-mode="anchors" aria-pressed="false">Start &amp; goal</button>
-            <button type="button" data-mode="draw" aria-pressed="false">Add a path</button>
+            <button type="button" data-mode="draw" aria-pressed="false">Draw paths</button>
           </div>
         </div>
       </div>
@@ -41,6 +41,7 @@
           <label class="check"><input type="checkbox" id="show-humans" checked><span>People's paths</span></label>
           <label class="check"><input type="checkbox" id="show-compiled" checked><span>Compiled path and spread</span></label>
           <label class="check"><input type="checkbox" id="show-ai" checked><span>VLM paths</span></label>
+          <label class="check"><input type="checkbox" id="show-admin" checked><span>Paths to rank</span></label>
           <div class="seg" id="role-seg" style="margin-left:auto"><button type="button" data-v="" aria-pressed="true">Everyone</button><button type="button" data-v="team" aria-pressed="false">Team</button><button type="button" data-v="survey" aria-pressed="false">Survey</button></div>
         </div>
         <div class="row" style="margin-top:.6rem">
@@ -64,24 +65,23 @@
       </div>
 
       <div class="card" id="panel-draw" style="margin-top:1rem" hidden>
-        <p class="small" style="margin-bottom:.6rem">Click to place points, exactly like participants do. Use this for a baseline planner, a path the team agreed on, or a VLM answer typed in by hand.</p>
+        <p class="small" style="margin-bottom:.6rem">Draw each path participants should choose between: click to place points, then <b>Save path</b> and draw the next one. Draw as many as you like. Participants see them in a shuffled order with neutral letters.</p>
         <div class="row">
-          <label class="field" style="flex:1;min-width:160px"><span>Model or method</span><input type="text" id="c-model" placeholder="e.g. shortest-path, fixed-cost, team-consensus" list="model-list"><datalist id="model-list"></datalist></label>
-          <label class="field" style="flex:1;min-width:140px"><span>Source</span><select id="c-source">
-            <option value="baseline">Baseline planner</option><option value="vlm">VLM</option><option value="team">Team consensus</option><option value="other">Other</option></select></label>
+          <label class="field" style="flex:1;min-width:180px;margin:0"><span>Name (optional, only you see it)</span><input type="text" id="c-label" placeholder="e.g. Cut across the lawn"></label>
+          <div class="seg" id="c-style" style="margin-top:1.3rem"><button type="button" data-v="line" aria-pressed="false">Straight lines</button><button type="button" data-v="curve" aria-pressed="true">Curves</button></div>
         </div>
-        <label class="field"><span>Note (optional)</span><input type="text" id="c-rationale" placeholder="Why this path?"></label>
-        <div class="row">
-          <div class="seg" id="c-style"><button type="button" data-v="line" aria-pressed="false">Straight lines</button><button type="button" data-v="curve" aria-pressed="true">Curves</button></div>
-          <label class="check"><input type="checkbox" id="c-wait"><span>This method chose to wait</span></label>
-          <label class="check"><input type="checkbox" id="c-override"><span>Use as this image's compiled path (replaces the automatic one)</span></label>
-        </div>
+        <label class="check" style="margin-top:.4rem"><input type="checkbox" id="c-wait"><span>This option is: the robot waits (no path)</span></label>
         <div class="row" style="margin-top:.4rem">
           <button class="btn btn-primary" id="c-save">Save path</button>
           <button class="btn" id="c-undo">Undo</button>
           <button class="btn" id="c-clear">Clear</button>
           <span class="small form-error" id="c-err"></span>
         </div>
+      </div>
+      <div class="card" style="margin-top:1rem">
+        <h3>Paths to rank</h3>
+        <div id="rank-summary" class="small muted" style="margin-bottom:.6rem"></div>
+        <div class="table-wrap" style="max-height:none"><table class="data" id="path-table"></table></div>
       </div>
     </div>
 
@@ -114,24 +114,29 @@
   </div>
 
   <div class="card" style="margin-top:.5rem">
+    <h3>Rankings</h3>
+    <div class="table-wrap"><table class="data" id="rank-table"></table></div>
+  </div>
+
+  <div class="card" id="heat-card">
     <h3>How similar people's paths are</h3>
     <p class="small muted">Each cell compares two people's paths: 100% identical, 50% right at the same-route threshold. Grouped by route; outliers are left out when they're excluded from the vote. Hover a cell for the Fréchet distance.</p>
     <div class="heatmap" id="heatmap"></div>
   </div>
 
-  <div class="card">
+  <div class="card" id="vlm-card">
     <h3>VLM images of this photo</h3>
     <div class="vlm-grid" id="vlm-grid"></div>
   </div>
 
-  <div class="card">
+  <div class="card" id="strip-card">
     <h3>How typical is each path?</h3>
     <p class="small muted" style="margin-bottom:.4rem">Each dot is one person: their average Fréchet distance to everyone else. Diamonds are VLM paths with coordinates. Further left means closer to the crowd.</p>
     <div class="chart" id="strip"></div>
   </div>
 
-  <div class="card">
-    <h3>Annotations</h3>
+  <div class="card" id="draw-card">
+    <h3>Drawn annotations</h3>
     <div class="table-wrap"><table class="data" id="draw-table"></table></div>
   </div>
 </main>

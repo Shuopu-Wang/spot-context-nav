@@ -314,3 +314,27 @@ pre code { background: none; padding: 0; color: inherit; }
 .qmean { font: 700 1.25rem/1 var(--font-display); font-variant-numeric: tabular-nums; }
 .vlm-view { background: #000; border-radius: 6px; overflow: hidden; }
 .vlm-view img { width: 100%; display: block; }
+
+/* ---------- ranking admin-drawn paths ---------- */
+.rk-list { display: grid; gap: .5rem; }
+.rk-card { border: 1.5px solid var(--line); border-radius: 10px; background: var(--surface); overflow: hidden; }
+.rk-card.is-ranked { border-color: var(--ink); }
+.rk-card.is-bad { border-color: var(--danger); background: #fff7f8; }
+.rk-pick { -webkit-tap-highlight-color: transparent; appearance: none; border: 0; background: transparent; width: 100%; display: flex; align-items: center; gap: .65rem;
+           padding: .65rem .75rem; font: 650 1rem var(--font-body); color: var(--ink); cursor: pointer; text-align: left; }
+.rk-pick:disabled { cursor: default; }
+.rk-rank { width: 30px; height: 30px; flex: none; border-radius: 50%; border: 2px dashed var(--ink-3); display: grid; place-items: center;
+           font: 700 .95rem var(--font-display); font-variant-numeric: tabular-nums; }
+.rk-card.is-ranked .rk-rank { background: var(--ink); border: 2px solid var(--ink); color: #fff; }
+.rk-pick:disabled .rk-rank { display: none; }
+.rk-name { flex: 1; }
+.rk-bad { display: flex; align-items: center; gap: .5rem; padding: .45rem .75rem .55rem 3.05rem; font-size: .88rem; color: var(--ink-2);
+          border-top: 1px solid var(--surface-2); cursor: pointer; }
+.rk-bad input { width: 18px; height: 18px; margin: 0; accent-color: var(--danger); }
+.rk-card.is-bad .rk-bad { color: var(--danger); font-weight: 600; }
+.rk-summary { display: flex; justify-content: space-between; align-items: center; gap: .5rem; margin-top: .5rem; min-height: 2rem; }
+.opt-chip { width: 26px; height: 26px; border-radius: 50%; color: #fff; display: grid; place-items: center; font-weight: 700; font-size: .85rem; flex: none; border: 2px solid #fff; box-shadow: 0 0 0 1px var(--line); }
+@media (max-width: 960px) {
+  .rank-screen .main { position: sticky; top: 45px; z-index: 5; }
+  .rank-screen .stage-hint { display: none; }
+}

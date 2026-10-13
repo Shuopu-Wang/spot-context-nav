@@ -33,10 +33,10 @@
     <div class="card">
       <h3>How a study runs</h3>
       <ol class="small steps">
-        <li>Upload training images under <a href="#images">Training images</a>, then open each one to place the robot's start and a goal flag.</li>
-        <li>Share the team link with your team and the survey link with everyone else. Team members draw on every image; survey participants on <span class="n-survey">5</span> random ones.</li>
-        <li>Each submitted path is saved as an annotated image in that photo's folder, and the site compares the paths, flags outliers and compiles one trajectory per photo.</li>
-        <li>Upload the images your VLM drew under <a href="#vlm">VLM images</a>. Each person rates <span class="n-rate">10</span> of them after drawing.</li>
+        <li>Upload training images under <a href="#images">Training images</a>. Open each one, place the robot's start and a goal flag, then choose <b>Draw paths</b> and draw as many candidate paths as you like.</li>
+        <li>Share the team link with your team and the survey link with everyone else. Team members rank the paths on every photo; survey participants on <span class="n-survey">5</span> random ones. Only photos with at least one path are shown.</li>
+        <li>Participants rank each photo's paths from best to worst and flag any that aren't socially acceptable. Each photo's folder gets the scores, the best-ranked path and every ranking.</li>
+        <li>Optional: upload images your VLM drew under <a href="#vlm">VLM images</a>; each person then rates <span class="n-rate">10</span> of them at the end. Set that number to 0 under Settings to skip it.</li>
         <li>Compare models under <a href="#results">Results</a> and download everything under <a href="#data">Data</a>.</li>
       </ol>
       <p class="small muted" style="margin:.4rem 0 0">Dataset folder on the server: <code id="dataset-dir"></code></p>
@@ -172,7 +172,10 @@
       <label class="field"><span>Study title</span><input type="text" name="study_title"></label>
       <label class="field"><span>Subtitle</span><input type="text" name="study_subtitle"></label>
       <label class="field"><span>Consent and information text</span><textarea name="consent_text" rows="8"></textarea></label>
-      <label class="field"><span>Drawing instructions (a photo can override this)</span><textarea name="default_prompt" rows="4"></textarea></label>
+      <label class="field"><span>What participants do with each photo</span><select name="participant_task">
+        <option value="rank">Rank the paths the admins drew</option><option value="draw">Draw their own path</option></select></label>
+      <label class="field"><span>Ranking instructions (a photo can override this)</span><textarea name="rank_prompt" rows="4"></textarea></label>
+      <label class="field"><span>Drawing instructions, if participants draw (a photo can override this)</span><textarea name="default_prompt" rows="3"></textarea></label>
       <label class="field"><span>Shown before the rating part</span><textarea name="rating_intro" rows="3"></textarea></label>
       <label class="field"><span>Shown above each rating</span><input type="text" name="rating_prompt"></label>
       <label class="field"><span>Message on the last screen</span><input type="text" name="completion_message"></label>

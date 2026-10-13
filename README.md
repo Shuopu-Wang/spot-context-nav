@@ -3,21 +3,21 @@
 A self-hosted website for a social-navigation study:
 
 1. **Upload training images**: egocentric photos (or short clips) of over-constrained scenes.
-2. **People sign in** with their name, email and optional ID, as a *research team member* (needs the
+2. **Admins draw candidate paths** on each image: as many as they like, with straight lines or
+   Bezier curves, plus an optional "the robot waits" option.
+3. **People sign in** with their name, email and optional ID, as a *research team member* (needs the
    team access code, gets **every** image) or a *survey participant* (gets **5 random** images,
-   favouring the images with the fewest annotations).
-3. **They draw a path** on each image: tap to place points, connect them with **straight lines or
-   Bezier curves**, bend any segment, or choose *I'd wait*. Then they submit the image.
-4. Every submission is saved as an **annotated image** in a folder per original image, so all
-   annotations of the same photo stay together as a set.
-5. The site **compares all paths of an image** (similarity score, Fréchet distance, MSE, DTW), detects
-   **outliers**, and **compiles one trajectory** per image (a robust average of the most popular route,
-   with its spread).
-6. **Upload the images your VLM drew** outside the site. They're matched to their training image by
-   file name.
-7. After drawing, each person **rates 10 VLM images** on standard social-navigation questions
-   (acceptable? comfortable, safe, reasonable, socially appropriate, natural, predictable).
-8. **Download the dataset**: the folders plus CSV tables, or a copy without names and emails.
+   favouring the images with the fewest rankings).
+4. **They rank the paths** on each image from best to worst (shown in a shuffled order with neutral
+   letters) and mark any path that is **not socially acceptable**.
+5. Each image's folder gets the **scores** (normalized Borda count), the **best-ranked acceptable path**,
+   rater agreement (**Kendall's W**) and every ranking. The best path per image is the training target.
+6. Optional: upload images your VLM drew and have each person **rate 10** of them at the end
+   (set the count to 0 in Settings to skip).
+7. **Download the dataset** as per-image folders plus CSV tables, or a copy without names and emails.
+
+The earlier mode, where participants draw their own paths, is still available under
+*Settings > What participants do with each photo*.
 
 No build step, no external services. Python 3.10+.
 
@@ -85,7 +85,26 @@ upgraded in place.
    similar number of ratings and nobody sees the same photo twice where possible.
 6. Read **Results**, then **Data > Download**.
 
-### The drawing widget
+### Ranking
+
+Open a training image in the admin, choose **Draw paths**, click points, **Save path**, repeat. Only
+photos with at least one path are handed out. Each participant sees that photo's paths in their own
+shuffled order, labelled A, B, C…, taps them from best to worst (the last one fills itself in; tapping
+a ranked path undoes from there), and can tick **Not socially acceptable** on any of them.
+
+Per path the site reports: **score** (normalized Borda count, 100% = always ranked first, 0% =
+always last, averaged over rankings), average position, share ranked best, and share marked not
+socially acceptable. The **best path** is the highest-scoring path that fewer than half the raters
+marked unacceptable; if every path fails that, the image is flagged *none acceptable*. **Kendall's W**
+(0 = no agreement, 1 = everyone gave the same order) shows how much raters agreed. If you add or delete
+paths after people have ranked, their earlier rankings still count for the paths they saw; Kendall's W
+uses only rankings that covered the current set.
+
+Files per image folder: `ranked_paths.jpg` (all paths, numbered by overall rank), `best_path.jpg`,
+`ranking.json` (every path with coordinates and scores, plus each ranking) and `rankings.csv`.
+The download adds `csv/path_scores.csv` and `csv/rankings.csv`.
+
+## The drawing widget
 
 - Tap the photo to place points; they connect from the robot (blue dot) to the flag.
 - **Straight lines / Curves** switches every segment. Curves are cubic Bezier segments with smooth

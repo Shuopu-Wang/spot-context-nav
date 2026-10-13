@@ -35,7 +35,8 @@
     $("stats").innerHTML = [
       [active, `training image${active === 1 ? "" : "s"} shown (${ov.scenes.length} total)`],
       [t.np, `participants (${t.nteam} team, ${t.np - t.nteam} survey)`],
-      [t.nd, "annotated images"],
+      [t.npaths, "paths drawn by admins"],
+      [t.nrank, "rankings"],
       [t.ncand, "VLM images"],
       [t.nr, "VLM ratings"],
     ].map(([v, l]) => `<div class="stat"><b>${v}</b><span>${l}</span></div>`).join("");
@@ -44,7 +45,7 @@
     $("dataset-dir-2").textContent = ov.dataset_dir;
     document.querySelectorAll(".n-survey").forEach((e) => { e.textContent = s.survey_draw_count; });
     document.querySelectorAll(".n-rate").forEach((e) => { e.textContent = s.rate_per_participant; });
-    $("survey-label").textContent = `Survey participants (${s.survey_draw_count} random photos, then rate ${s.rate_per_participant} VLM images)`;
+    $("survey-label").textContent = `Survey participants (${s.survey_draw_count} random photos${s.rate_per_participant && t.ncand ? `, then rate ${s.rate_per_participant} VLM images` : ""})`;
     updateLinks();
     renderScenes();
     fillSettings(s);
@@ -67,11 +68,20 @@
 
   // ---------------------------------------------------------------- training images
   let summaries = {}, imgRole = "";
+  function bestCell(sm) {
+    if (!sm) return '<span class="muted">…</span>';
+    const r = sm.ranking || {};
+    if (!r.n_rankings) return '<span class="muted small">no rankings yet</span>';
+    if (r.all_unacceptable) return '<span class="pill pill-bad">none acceptable</span>';
+    return `<b>${esc(sm.best_label || "–")}</b>${r.kendall_w != null ? `<div class="tiny muted">agreement W = ${num(r.kendall_w)}</div>` : ""}`;
+  }
   function renderScenes() {
     const rows = ov.scenes, tbl = $("scene-table");
     if (!rows.length) { tbl.innerHTML = `<tbody><tr><td class="muted" style="padding:1.5rem">No training images yet. Upload some above.</td></tr></tbody>`; return; }
+    const rankMode = ov.settings.participant_task !== "draw";
     tbl.innerHTML = `<thead><tr><th></th><th>Training image</th><th>Split</th><th>Start / goal</th><th>Shown</th>
-      <th class="num">Team</th><th class="num">Survey</th><th>Agreement</th><th class="num">VLM</th><th></th></tr></thead><tbody>${
+      ${rankMode ? '<th class="num">Paths</th><th class="num">Rankings (team / survey)</th><th>Best path</th>'
+                 : '<th class="num">Team</th><th class="num">Survey</th><th>Agreement</th>'}<th class="num">VLM</th><th></th></tr></thead><tbody>${
       rows.map((s) => {
         const sm = summaries[s.id];
         let agree = '<span class="muted">…</span>';
@@ -87,7 +97,9 @@
           <td>${s.split ? `<span class="pill">${esc(s.split)}</span>` : '<span class="muted">–</span>'}</td>
           <td>${s.goal ? '<span class="pill pill-ok">set</span>' : '<span class="pill pill-warn">no goal</span>'}</td>
           <td><label class="check" style="padding:0"><input type="checkbox" data-active="${s.id}" ${s.active ? "checked" : ""}><span class="small">active</span></label></td>
-          <td class="num">${s.n_team}</td><td class="num">${s.n_drawings - s.n_team}</td><td>${agree}</td>
+          ${rankMode ? `<td class="num">${s.n_paths ? s.n_paths : '<span class="pill pill-warn">none yet</span>'}</td>
+            <td class="num">${s.n_rankings_team} / ${s.n_rankings - s.n_rankings_team}</td><td>${bestCell(sm)}</td>`
+          : `<td class="num">${s.n_team}</td><td class="num">${s.n_drawings - s.n_team}</td><td>${agree}</td>`}
           <td class="num">${s.n_vlm}</td><td><a class="btn" href="/admin/image/${s.id}">Open</a></td></tr>`;
       }).join("")}</tbody>`;
   }
@@ -122,7 +134,7 @@
     status.textContent = `Uploading ${i} file${i === 1 ? "" : "s"}…`;
     try {
       const r = await api("/api/admin/scenes", "POST", fd);
-      status.textContent = `Added ${r.created.length} training image${r.created.length === 1 ? "" : "s"}. Open each one to place the robot's start and the goal flag.`;
+      status.textContent = `Added ${r.created.length} training image${r.created.length === 1 ? "" : "s"}. Open each one to place the robot's start and goal, then draw the paths people will rank.`;
       await loadOverview(); loadSummaries();
     } catch (err) { status.textContent = err.message; }
   });
@@ -349,6 +361,7 @@ curl -X POST -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application
   function fillSettings(s) {
     const f = $("settings-form");
     for (const k of ["study_title", "study_subtitle", "consent_text", "default_prompt", "rating_intro", "rating_prompt",
+                     "participant_task", "rank_prompt",
                      "completion_message", "survey_draw_count", "team_draw_count", "rate_per_participant", "consensus_controls",
                      "team_code", "default_line_style", "rating_display", "compiled_method"]) f[k].value = s[k];
     f.require_email.checked = !!s.require_email;
@@ -387,6 +400,7 @@ curl -X POST -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application
     const body = {
       study_title: f.study_title.value, study_subtitle: f.study_subtitle.value, consent_text: f.consent_text.value,
       default_prompt: f.default_prompt.value, rating_intro: f.rating_intro.value, rating_prompt: f.rating_prompt.value,
+      participant_task: f.participant_task.value, rank_prompt: f.rank_prompt.value,
       completion_message: f.completion_message.value, require_email: f.require_email.checked, ask_demographics: f.ask_demographics.checked,
       survey_draw_count: Math.max(1, +f.survey_draw_count.value || 5), team_draw_count: Math.max(0, +f.team_draw_count.value || 0),
       rate_per_participant: Math.max(0, +f.rate_per_participant.value || 0), consensus_controls: Math.max(0, +f.consensus_controls.value || 0),

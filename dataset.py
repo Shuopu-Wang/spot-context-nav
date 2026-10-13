@@ -360,7 +360,8 @@ def sync_set(con, row, s, dataset_dir: Path, media_dir: Path, analysis_fn, rende
 
         # VLM images of this training image
         vdir = d / "vlm"
-        cands = con.execute("SELECT * FROM candidates WHERE scene_id=? AND consensus_override=0", (row["id"],)).fetchall()
+        cands = con.execute("SELECT * FROM candidates WHERE scene_id=? AND consensus_override=0 "
+                            "AND COALESCE(source, '') != 'admin'", (row["id"],)).fetchall()
         keep = set()
         for c in cands:
             name = vlm_file_name(c)
@@ -451,6 +452,115 @@ def _write_summary(con, row, s, d: Path, media_dir: Path, a: dict, cands):
         _atomic_write(d / "compiled_path.jpg", comp_img)
     else:
         (d / "compiled_path.jpg").unlink(missing_ok=True)
+    _write_ranking(con, row, d, media_dir)
+
+
+# ---------------------------------------------------------------------------
+# Rankings of admin-drawn paths
+# ---------------------------------------------------------------------------
+
+RANK_COLORS = ["#ff2d87", "#2459ff", "#f2a900", "#00a6a6", "#8b5cf6", "#e4572e", "#5c7c00", "#0f172a",
+               "#d946ef", "#0891b2", "#a16207", "#be123c"]
+
+
+def _rgb(h):
+    h = h.lstrip("#")
+    return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def scene_ranking(con, sid):
+    """(admin paths, ranking rows, summary) for one training image."""
+    paths = con.execute("""SELECT * FROM candidates WHERE scene_id=? AND source='admin'
+                           AND (points IS NOT NULL OR decision='wait') ORDER BY created_at""", (sid,)).fetchall()
+    rows = con.execute("""SELECT r.*, p.code, p.role FROM rankings r JOIN participants p ON p.id = r.participant_id
+                          WHERE r.scene_id=? AND r.excluded=0 AND p.excluded=0 ORDER BY p.code""", (sid,)).fetchall()
+    rk = [{"ranking": jload(r["ranking"], []), "unacceptable": jload(r["unacceptable"], []), "code": r["code"],
+           "role": r["role"], "comment": r["comment"], "duration_ms": r["duration_ms"], "created_at": r["created_at"]}
+          for r in rows]
+    return paths, rk, A.ranking_summary([c["id"] for c in paths], rk)
+
+
+def path_labels(paths):
+    return {c["id"]: (c["label"] or f"Path {i + 1}") for i, c in enumerate(paths)}
+
+
+def _chip(dr, x, y, text, color, size):
+    r = size
+    dr.ellipse([x - r, y - r, x + r, y + r], fill=color, outline=(255, 255, 255), width=max(2, r // 5))
+    f = _font(max(10, int(r * 1.2)))
+    tw = dr.textlength(text, font=f)
+    dr.text((x - tw / 2, y - r * 0.68), text, font=f, fill=(255, 255, 255))
+
+
+def render_ranked_paths(scene, paths, summ, media_dir: Path) -> bytes:
+    """Every admin path in its own colour, numbered by overall rank (1 = best) once people have ranked."""
+    im = _frame(media_dir, scene)
+    W, H = im.size
+    start, goal = _anchors(scene)
+    order = summ["order"]
+    items, chips = [], []
+    for i, c in enumerate(paths):
+        color = _rgb(RANK_COLORS[i % len(RANK_COLORS)])
+        num = str(order.index(c["id"]) + 1) if c["id"] in order else str(i + 1)
+        if c["decision"] == "wait" or not c["points"]:
+            chips.append((start[0] * W + 40, start[1] * H - 40 - 30 * len(chips), num + "W", color))
+            continue
+        pts = _dense_norm(jload(c["points"]), jload(c["segments"]), c["style"], scene["width"], scene["height"],
+                          c["kind"] or "waypoints")
+        items.append((pts, color, 0.9, False, True))
+        mid = pts[len(pts) // 2]
+        chips.append((mid[0] * W, mid[1] * H, num, color))
+    draw_scene(im, items, start, goal)
+    dr = ImageDraw.Draw(im)
+    size = max(12, round(math.hypot(W, H) / 110))
+    for x, y, t, col in chips:
+        _chip(dr, x, y, t, col, size)
+    return _jpeg(im)
+
+
+def _write_ranking(con, row, d: Path, media_dir: Path):
+    paths, rk, summ = scene_ranking(con, row["id"])
+    files = ("ranking.json", "rankings.csv", "ranked_paths.jpg", "best_path.jpg")
+    if not paths:
+        for f in files:
+            (d / f).unlink(missing_ok=True)
+        return
+    label = path_labels(paths)
+    by_id = {c["id"]: c for c in paths}
+    ordered = summ["order"] + [c["id"] for c in paths if c["id"] not in summ["order"]]
+    start, goal = _anchors(row)
+    payload = {
+        "image": {"id": row["id"], "title": row["title"], "source_name": row["source_name"], "width": row["width"],
+                  "height": row["height"], "start": start, "goal": goal,
+                  "original_file": f"original{Path(row['frame_file']).suffix.lower()}"},
+        "coordinates": "normalized image coordinates (x / width, y / height), origin top-left",
+        "scoring": "score = normalized Borda count averaged over rankings (1 = always ranked best, 0 = always worst); "
+                   "best_path = highest-scoring path that fewer than half the raters marked not socially acceptable",
+        "n_rankings": summ["n_rankings"], "n_complete_rankings": summ["n_complete"],
+        "kendall_w": summ["kendall_w"], "top_agreement": summ["top_agreement"],
+        "best_path": label.get(summ["best"]), "best_path_id": summ["best"],
+        "all_unacceptable": summ["all_unacceptable"],
+        "paths": [{"id": i, "label": label[i], **summ["paths"][i], "is_best": i == summ["best"],
+                   "decision": by_id[i]["decision"], "points": jload(by_id[i]["points"]),
+                   "segments": jload(by_id[i]["segments"]), "style": by_id[i]["style"]} for i in ordered],
+        "rankings": [{"code": r["code"], "role": r["role"], "order": [label[x] for x in r["ranking"] if x in label],
+                      "not_acceptable": [label[x] for x in r["unacceptable"] if x in label], "comment": r["comment"]}
+                     for r in rk],
+    }
+    _atomic_write(d / "ranking.json", json.dumps(payload, indent=1, default=_json_default).encode())
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["code", "role", "ranking_best_to_worst", "not_socially_acceptable", "comment"])
+    for r in payload["rankings"]:
+        w.writerow([r["code"], r["role"], " > ".join(r["order"]), "; ".join(r["not_acceptable"]), r["comment"] or ""])
+    _atomic_write(d / "rankings.csv", buf.getvalue().encode())
+    _atomic_write(d / "ranked_paths.jpg", render_ranked_paths(row, paths, summ, media_dir))
+    best = by_id.get(summ["best"])
+    if best is not None:
+        _copy_bytes = render_candidate(row, best, media_dir).read_bytes()
+        _atomic_write(d / "best_path.jpg", _copy_bytes)
+    else:
+        (d / "best_path.jpg").unlink(missing_ok=True)
 
 
 def sync_unlinked(con, dataset_dir: Path, media_dir: Path):
@@ -501,7 +611,15 @@ images/<image>__<id>/          one folder per training image (a "set"):
     similarity.csv               pairwise similarity between participants' paths (1 = identical,
                                  0.5 = at the same-route threshold)
     frechet_distance.csv         pairwise discrete Frechet distance (fraction of image diagonal)
+    ranked_paths.jpg             the paths the admins drew, numbered by participants' overall rank (1 = best)
+    best_path.jpg                the best-ranked path that most raters found socially acceptable
+    ranking.json                 every admin path (coordinates, score, rank, % not acceptable) + each ranking
+    rankings.csv                 one row per participant: their order, best to worst, and paths they flagged
 images/_vlm_unlinked/          VLM images not matched to any training image
+
+csv/path_scores.csv            one row per admin-drawn path: overall rank, score, % ranked first,
+                               % marked not socially acceptable, is_best, coordinates
+csv/rankings.csv               one row per (participant, image, path): rank given and whether flagged
 
 csv/participants.csv           participant codes, role (team/survey), identifiers, demographics
 csv/images.csv                 per training image: agreement summary + compiled trajectory
@@ -665,6 +783,29 @@ def build_export(con, fp, s, dataset_dir: Path, media_dir: Path, analysis_fn, ra
         z.writestr("csv/vlm_images.csv", _csv(vlm_rows, cols(vlm_rows)))
         z.writestr("csv/vlm_ratings.csv", _csv(rate_rows, cols(rate_rows)))
         z.writestr("csv/model_summary.csv", _csv(model_rows, cols(model_rows)))
+        score_rows, rank_rows = [], []
+        for r in scenes:
+            paths, rk, rs = scene_ranking(con, r["id"])
+            if not paths:
+                continue
+            label = path_labels(paths)
+            for c in paths:
+                ps = rs["paths"][c["id"]]
+                score_rows.append({"image_id": r["id"], "image_title": r["title"], "path_id": c["id"], "label": label[c["id"]],
+                                   "overall_rank": ps.get("overall_rank"), "score": ps["score"], "mean_rank": ps["mean_rank"],
+                                   "ranked_first_share": ps["first_share"], "not_acceptable_share": ps["unacceptable_share"],
+                                   "n_rankings": ps["n"], "is_best": c["id"] == rs["best"], "decision": c["decision"],
+                                   "points": jload(c["points"]), "segments": jload(c["segments"]), "style": c["style"],
+                                   "image_kendall_w": rs["kendall_w"]})
+            for k in rk:
+                order = [x for x in k["ranking"] if x in label]
+                for pos, x in enumerate(order, start=1):
+                    rank_rows.append({"rater_code": k["code"], "rater_role": k["role"], "image_id": r["id"],
+                                      "image_title": r["title"], "path_id": x, "label": label[x], "rank": pos,
+                                      "n_paths": len(order), "not_acceptable": x in k["unacceptable"],
+                                      "comment": k["comment"], "duration_ms": k["duration_ms"], "created_at": k["created_at"]})
+        z.writestr("csv/path_scores.csv", _csv(score_rows, cols(score_rows)))
+        z.writestr("csv/rankings.csv", _csv(rank_rows, cols(rank_rows)))
         z.writestr("csv/reliability.csv", _csv([{"question": q["key"], "type": q["type"], "text": q["text"],
                                                  "krippendorff_alpha": summ["reliability"].get(q["key"])}
                                                 for q in questions], ["question", "type", "text", "krippendorff_alpha"]))
@@ -698,9 +839,11 @@ def build_export(con, fp, s, dataset_dir: Path, media_dir: Path, analysis_fn, ra
             "settings": {k: v for k, v in s.items() if k != "team_code"},
             "images": scene_json, "annotations": ann_rows, "vlm_images": vlm_rows, "vlm_ratings": rate_rows,
             "participants": part_rows, "model_summary": model_rows, "reliability": summ["reliability"],
+            "path_scores": score_rows, "rankings": rank_rows,
             "_raw": {"scenes": raw_scenes,
                      "participants": raw("participants", ("name", "email", "external_id", "user_agent") if anonymize else ()),
-                     "drawings": raw("drawings"), "candidates": raw_cands, "vlm_ratings": raw("vlm_ratings")},
+                     "drawings": raw("drawings"), "candidates": raw_cands, "vlm_ratings": raw("vlm_ratings"),
+                     "rankings": raw("rankings")},
         }
         z.writestr("dataset.json", json.dumps(dataset, indent=1, default=_json_default))
 
@@ -724,7 +867,7 @@ def merge_import(con, fileobj, media_dir: Path, assign_code) -> dict:
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 dst.write_bytes(z.read(prefix + src))
 
-        for table in ("scenes", "participants", "drawings", "candidates", "vlm_ratings"):
+        for table in ("scenes", "participants", "drawings", "candidates", "vlm_ratings", "rankings"):
             rows = raw.get(table, [])
             cols = {r[1] for r in con.execute(f"PRAGMA table_info({table})")}
             added = 0

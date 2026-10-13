@@ -114,8 +114,9 @@ DEFAULT_SETTINGS = {
     "study_subtitle": "Help a walking robot learn how to move politely through crowds.",
     "consent_text": (
         "This study is run by student researchers studying how robots should move around people.\n\n"
-        "You will see photos taken from a robot's point of view and draw the path you think the robot should "
-        "take. Then you will rate some paths drawn by AI systems.\n\n"
+        "You will see photos taken from a robot's point of view with several paths the robot could take, and "
+        "rank them from best to worst, flagging any that are not socially acceptable. You may also rate some "
+        "paths drawn by AI systems.\n\n"
         "It takes about 10–15 minutes. Taking part is voluntary and you can stop at any time. We ask for your "
         "name and email so we can tell responses apart and reach you if needed. They are stored securely and "
         "never published; any data we share uses only an anonymous participant code. "
@@ -133,6 +134,11 @@ DEFAULT_SETTINGS = {
     ),
     "rating_prompt": "Imagine a robot following the drawn path in this scene.",
     "completion_message": "Thank you! Your responses have been saved.",
+    "participant_task": "rank",    # "rank" the admins' paths, or "draw" their own
+    "rank_prompt": (
+        "You are the robot (blue dot) heading for the green flag. Each coloured line is a path the robot could "
+        "take. Tap the paths in order from best to worst. If a path is really not socially acceptable, mark it."
+    ),
     "survey_draw_count": 5,
     "team_draw_count": 0,          # 0 = every active training image
     "rate_per_participant": 10,
@@ -188,6 +194,12 @@ CREATE TABLE IF NOT EXISTS vlm_ratings (
     scene_id TEXT, model TEXT, answers TEXT, norms TEXT, comment TEXT, position INTEGER, duration_ms INTEGER,
     rater_drew_scene INTEGER, shown_image TEXT, created_at TEXT NOT NULL, UNIQUE(participant_id, item_ref)
 );
+CREATE TABLE IF NOT EXISTS rankings (
+    id TEXT PRIMARY KEY, participant_id TEXT NOT NULL, scene_id TEXT NOT NULL,
+    ranking TEXT NOT NULL, unacceptable TEXT, shown TEXT, comment TEXT, duration_ms INTEGER,
+    excluded INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, UNIQUE(participant_id, scene_id)
+);
+CREATE INDEX IF NOT EXISTS ix_rank_scene ON rankings(scene_id);
 CREATE INDEX IF NOT EXISTS ix_drawings_scene ON drawings(scene_id);
 CREATE INDEX IF NOT EXISTS ix_cand_scene ON candidates(scene_id);
 CREATE INDEX IF NOT EXISTS ix_vr_item ON vlm_ratings(item_ref);
@@ -594,7 +606,7 @@ def rating_overview(con, s, role=None):
 def public_settings(s: dict) -> dict:
     keys = ["study_title", "study_subtitle", "consent_text", "default_prompt", "rating_intro", "rating_prompt",
             "completion_message", "ask_demographics", "require_email", "norms", "questions",
-            "ask_norms_in_rating", "default_line_style", "survey_draw_count"]
+            "ask_norms_in_rating", "default_line_style", "survey_draw_count", "participant_task", "rank_prompt"]
     return {k: s[k] for k in keys}
 
 
@@ -613,15 +625,65 @@ def _ratable_items(con):
     return con.execute("""
         SELECT c.id, c.scene_id, (SELECT COUNT(*) FROM vlm_ratings r WHERE r.item_ref = c.id) n
         FROM candidates c LEFT JOIN scenes s ON s.id = c.scene_id
-        WHERE c.include_in_rating = 1 AND c.consensus_override = 0
+        WHERE c.include_in_rating = 1 AND c.consensus_override = 0 AND COALESCE(c.source, '') != 'admin'
           AND (c.image_file IS NOT NULL OR s.id IS NOT NULL)""").fetchall()
+
+
+PATH_COLORS = ["#ff2d87", "#2459ff", "#f2a900", "#00a6a6", "#8b5cf6", "#e4572e", "#5c7c00", "#0f172a",
+               "#d946ef", "#0891b2", "#a16207", "#be123c"]
+
+
+def _rank_mode(s) -> bool:
+    return s.get("participant_task", "rank") != "draw"
+
+
+def admin_paths(con, sid):
+    """Paths the admins drew on a training image (the options participants rank)."""
+    return con.execute("""SELECT * FROM candidates WHERE scene_id=? AND source='admin'
+                          AND (points IS NOT NULL OR decision='wait') ORDER BY created_at""", (sid,)).fetchall()
+
+
+def _task_scene_ids(con, s) -> list:
+    """Active training images that can be shown. In rank mode they need at least one admin path."""
+    if _rank_mode(s):
+        return [r["id"] for r in con.execute("""SELECT s.id FROM scenes s WHERE s.active = 1 AND EXISTS (
+            SELECT 1 FROM candidates c WHERE c.scene_id = s.id AND c.source = 'admin'
+            AND (c.points IS NOT NULL OR c.decision = 'wait')) ORDER BY s.sort_order, s.created_at""")]
+    return [r["id"] for r in con.execute("SELECT id FROM scenes WHERE active = 1")]
+
+
+def _done_ids(con, pid, s) -> set:
+    table = "rankings" if _rank_mode(s) else "drawings"
+    return {r[0] for r in con.execute(f"SELECT scene_id FROM {table} WHERE participant_id=?", (pid,))}
+
+
+def _paths_for(con, pid, sid) -> list:
+    """Admin paths in a per-participant shuffled order, with neutral letters and colours."""
+    rows = admin_paths(con, sid)
+    rng = random.Random(f"{pid}:{sid}")
+    rows = list(rows)
+    rng.shuffle(rows)
+    out = []
+    for i, c in enumerate(rows):
+        out.append({"id": c["id"], "letter": string.ascii_uppercase[i % 26] + ("" if i < 26 else str(i // 26)),
+                    "color": PATH_COLORS[i % len(PATH_COLORS)], "decision": c["decision"],
+                    "points": jload(c["points"]), "segments": jload(c["segments"]), "style": c["style"],
+                    "kind": c["kind"] or "waypoints"})
+    return out
 
 
 def _draw_list(con, p, s) -> list:
     """Training images for this participant. Team: every active image (grows as images are added)."""
     assigned = jload(p["assigned"], {}) or {}
     lst = list(assigned.get("draw") or [])
-    active = [r["id"] for r in con.execute("SELECT id FROM scenes WHERE active = 1")]
+    active = _task_scene_ids(con, s)
+    if not lst and p["role"] != "team" and not _done_ids(con, p["id"], s):
+        # signed up before any photo was ready: hand out a set now
+        lst = _balanced_scenes(con, int(s["survey_draw_count"]), s)
+        if lst:
+            assigned["draw"] = lst
+            con.execute("UPDATE participants SET assigned=? WHERE id=?", (json.dumps(assigned), p["id"]))
+            con.commit()
     if p["role"] == "team" and not int(s["team_draw_count"]):
         new = [sid for sid in active if sid not in lst]
         if new:
@@ -630,14 +692,16 @@ def _draw_list(con, p, s) -> list:
             assigned["draw"] = lst
             con.execute("UPDATE participants SET assigned=? WHERE id=?", (json.dumps(assigned), p["id"]))
             con.commit()
-    done = {r[0] for r in con.execute("SELECT scene_id FROM drawings WHERE participant_id=?", (p["id"],))}
+    done = _done_ids(con, p["id"], s)
     active_set = set(active)
     return [sid for sid in lst if sid in active_set or sid in done]
 
 
-def _balanced_scenes(con, k):
-    rows = con.execute("""SELECT s.id, (SELECT COUNT(*) FROM drawings d WHERE d.scene_id = s.id AND d.excluded = 0) n
-                          FROM scenes s WHERE s.active = 1""").fetchall()
+def _balanced_scenes(con, k, s):
+    table = "rankings" if _rank_mode(s) else "drawings"
+    ids = set(_task_scene_ids(con, s))
+    rows = [r for r in con.execute(f"""SELECT s.id, (SELECT COUNT(*) FROM {table} d WHERE d.scene_id = s.id
+                                       AND d.excluded = 0) n FROM scenes s""").fetchall() if r["id"] in ids]
     rows = sorted(rows, key=lambda r: (r["n"], random.random()))
     picked = [r["id"] for r in rows[:k] if k] if k else [r["id"] for r in rows]
     random.shuffle(picked)
@@ -687,13 +751,23 @@ def _session_payload(con, pid: str, resumed=False) -> dict:
         abort(404)
     s = get_settings(con)
     draw_ids = _draw_list(con, p, s)
-    done_d = {r[0] for r in con.execute("SELECT scene_id FROM drawings WHERE participant_id=?", (pid,))}
+    done_d = _done_ids(con, pid, s)
+    rank = _rank_mode(s)
     scenes = {}
     if draw_ids:
         q = ",".join("?" * len(draw_ids))
         for r in con.execute(f"SELECT * FROM scenes WHERE id IN ({q})", draw_ids):
             scenes[r["id"]] = scene_public(r)
-    draw = [{"scene": scenes[i], "done": i in done_d} for i in draw_ids if i in scenes]
+    draw = []
+    for i in draw_ids:
+        if i not in scenes:
+            continue
+        t = {"scene": scenes[i], "done": i in done_d, "kind": "rank" if rank else "draw"}
+        if rank:
+            t["paths"] = _paths_for(con, pid, i)
+            if not t["paths"] and not t["done"]:
+                continue
+        draw.append(t)
 
     assigned = jload(p["assigned"], {}) or {}
     rate = assigned.get("rate")
@@ -752,7 +826,7 @@ def register():
 
     pid = new_id()
     k = int(s["team_draw_count"]) if role == "team" else int(s["survey_draw_count"])
-    draw = [] if role == "team" and not k else _balanced_scenes(con, k)
+    draw = [] if role == "team" and not k else _balanced_scenes(con, k, s)
     con.execute("""INSERT INTO participants (id, name, email, external_id, role, grp, demographics, assigned,
                    user_agent, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)""",
                 (pid, name, email, str(b.get("external_id") or "")[:128], role,
@@ -820,6 +894,54 @@ def submit_drawing():
     did = con.execute("SELECT id FROM drawings WHERE participant_id=? AND scene_id=?", (pid, sid)).fetchone()[0]
     enqueue_sync(sid, {did})
     return jsonify({"ok": True})
+
+
+@app.post("/api/rankings")
+def submit_ranking():
+    b = request.get_json(force=True, silent=True) or {}
+    con = db()
+    pid, sid = b.get("participant_id"), b.get("scene_id")
+    p = con.execute("SELECT * FROM participants WHERE id=?", (pid,)).fetchone()
+    if not p:
+        raise BadRequest("unknown participant")
+    if sid not in _draw_list(con, p, get_settings(con)):
+        raise BadRequest("this image isn't assigned to you")
+    ids = [c["id"] for c in admin_paths(con, sid)]
+    ranking = b.get("ranking")
+    if not isinstance(ranking, list) or sorted(map(str, ranking)) != sorted(ids):
+        raise BadRequest("Please rank every path. (The paths on this photo changed; reload the page.)")
+    bad = [x for x in (b.get("unacceptable") or []) if x in ids]
+    shown = b.get("shown") if isinstance(b.get("shown"), list) else []
+    con.execute("""INSERT INTO rankings (id, participant_id, scene_id, ranking, unacceptable, shown, comment, duration_ms,
+                   created_at) VALUES (?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(participant_id, scene_id) DO UPDATE SET ranking=excluded.ranking,
+                   unacceptable=excluded.unacceptable, shown=excluded.shown, comment=excluded.comment,
+                   duration_ms=excluded.duration_ms, created_at=excluded.created_at""",
+                (new_id(), pid, sid, json.dumps(ranking), json.dumps(bad), json.dumps(shown)[:4000],
+                 str(b.get("comment") or "")[:2000], int(b.get("duration_ms") or 0), now()))
+    bump_scene(con, sid)
+    con.commit()
+    enqueue_sync(sid)
+    return jsonify({"ok": True})
+
+
+def ranking_rows(con, sid, role=None):
+    q = """SELECT r.*, p.code, p.role, p.name FROM rankings r JOIN participants p ON p.id = r.participant_id
+           WHERE r.scene_id = ? AND r.excluded = 0 AND p.excluded = 0"""
+    args = [sid]
+    if role:
+        q += " AND p.role = ?"
+        args.append(role)
+    return [{**dict(r), "ranking": jload(r["ranking"], []), "unacceptable": jload(r["unacceptable"], []),
+             "shown": jload(r["shown"], [])} for r in con.execute(q + " ORDER BY r.created_at", args)]
+
+
+def scene_ranking(con, sid, role=None):
+    paths = admin_paths(con, sid)
+    summ = A.ranking_summary([c["id"] for c in paths], ranking_rows(con, sid, role))
+    for i, c in enumerate(paths):
+        summ["paths"][c["id"]]["label"] = c["label"] or f"Path {i + 1}"
+    return summ
 
 
 def _item_info(con, ref):
@@ -955,9 +1077,15 @@ def _scene_counts(con) -> dict:
              WHERE d.scene_id=s.id AND d.excluded=0 AND p.excluded=0) nd,
           (SELECT COUNT(*) FROM drawings d JOIN participants p ON p.id=d.participant_id
              WHERE d.scene_id=s.id AND d.excluded=0 AND p.excluded=0 AND p.role='team') nt,
-          (SELECT COUNT(*) FROM candidates c WHERE c.scene_id=s.id) nc
+          (SELECT COUNT(*) FROM candidates c WHERE c.scene_id=s.id AND COALESCE(c.source,'') != 'admin') nc,
+          (SELECT COUNT(*) FROM candidates c WHERE c.scene_id=s.id AND c.source = 'admin') na,
+          (SELECT COUNT(*) FROM rankings k JOIN participants p ON p.id=k.participant_id
+             WHERE k.scene_id=s.id AND k.excluded=0 AND p.excluded=0) nr,
+          (SELECT COUNT(*) FROM rankings k JOIN participants p ON p.id=k.participant_id
+             WHERE k.scene_id=s.id AND k.excluded=0 AND p.excluded=0 AND p.role='team') nrt
         FROM scenes s"""):
-        out[r["id"]] = {"n_drawings": r["nd"], "n_team": r["nt"], "n_vlm": r["nc"]}
+        out[r["id"]] = {"n_drawings": r["nd"], "n_team": r["nt"], "n_vlm": r["nc"], "n_paths": r["na"],
+                        "n_rankings": r["nr"], "n_rankings_team": r["nrt"]}
     return out
 
 
@@ -977,11 +1105,13 @@ def admin_overview():
         (SELECT COUNT(*) FROM participants WHERE role='team') nteam,
         (SELECT COUNT(*) FROM participants WHERE completed_at IS NOT NULL) nc,
         (SELECT COUNT(*) FROM drawings) nd,
-        (SELECT COUNT(*) FROM candidates) ncand,
+        (SELECT COUNT(*) FROM rankings) nrank,
+        (SELECT COUNT(*) FROM candidates WHERE source='admin') npaths,
+        (SELECT COUNT(*) FROM candidates WHERE COALESCE(source,'') != 'admin') ncand,
         (SELECT COUNT(*) FROM vlm_ratings) nr""").fetchone()
     return jsonify({"scenes": scenes, "settings": s, "totals": dict(tot), "dataset_dir": str(DATASET_DIR),
                     "default_password": ADMIN_PASSWORD == "changeme",
-                    "models": [r[0] for r in con.execute("SELECT DISTINCT model FROM candidates ORDER BY model")]})
+                    "models": [r[0] for r in con.execute("SELECT DISTINCT model FROM candidates WHERE COALESCE(source,'') != 'admin' ORDER BY model")]})
 
 
 @app.get("/api/admin/scene_summaries")
@@ -990,8 +1120,14 @@ def admin_scene_summaries():
     con = db()
     s = get_settings(con)
     role = request.args.get("role") or None
-    return jsonify({r["id"]: scene_analysis(con, r, s, role)["summary"]
-                    for r in con.execute("SELECT * FROM scenes").fetchall()})
+    out = {}
+    for r in con.execute("SELECT * FROM scenes").fetchall():
+        rk = scene_ranking(con, r["id"], role)
+        out[r["id"]] = {**scene_analysis(con, r, s, role)["summary"],
+                        "ranking": {k: rk[k] for k in ("n_rankings", "n_complete", "kendall_w", "top_agreement",
+                                                       "all_unacceptable")},
+                        "best_label": rk["paths"][rk["best"]]["label"] if rk["best"] else None}
+    return jsonify(out)
 
 
 def _save_frame(sid: str, fs, base="frame") -> tuple[str, int, int]:
@@ -1148,6 +1284,7 @@ def admin_delete_scene(sid):
     if not row:
         abort(404)
     con.execute("DELETE FROM drawings WHERE scene_id=?", (sid,))
+    con.execute("DELETE FROM rankings WHERE scene_id=?", (sid,))
     con.execute("UPDATE candidates SET scene_id=NULL WHERE scene_id=?", (sid,))
     con.execute("DELETE FROM vlm_ratings WHERE item_ref=?", (f"consensus:{sid}",))
     con.execute("DELETE FROM scenes WHERE id=?", (sid,))
@@ -1206,7 +1343,17 @@ def admin_scene_analysis(sid):
         d["metrics"] = metrics.get(c["id"])
         cands.append(d)
     codes = {d["id"]: d["code"] for d in drawings}
+    ranking = scene_ranking(con, sid, role)
+    rk_rows = []
+    for r in con.execute("""SELECT k.*, p.code, p.name, p.role, p.excluded p_excluded FROM rankings k
+                            JOIN participants p ON p.id = k.participant_id WHERE k.scene_id=? ORDER BY k.created_at""", (sid,)):
+        rk_rows.append({"id": r["id"], "code": r["code"], "name": r["name"], "role": r["role"],
+                        "ranking": jload(r["ranking"], []), "unacceptable": jload(r["unacceptable"], []),
+                        "comment": r["comment"], "duration_ms": r["duration_ms"], "created_at": r["created_at"],
+                        "excluded": bool(r["excluded"] or r["p_excluded"])})
     return jsonify({"scene": scene_admin(row), "analysis": res, "drawings": drawings, "candidates": cands,
+                    "ranking": ranking, "rankings": rk_rows,
+                    "admin_paths": [c for c in cands if c["source"] == "admin"],
                     "pairwise_codes": [codes.get(i) for i in res["pairwise_ids"]],
                     "control_ratings": summ["items"].get(f"consensus:{sid}"),
                     "settings": {k: s[k] for k in ("cluster_threshold", "norms", "fast_response_ms", "questions",
@@ -1259,6 +1406,12 @@ def admin_add_candidate(sid):
     con = db()
     b = request.get_json(force=True, silent=True) or {}
     b["scene_id"] = sid
+    if (b.get("source") or "admin") == "admin":   # a path for participants to rank
+        b["source"] = "admin"
+        n = len(admin_paths(con, sid))
+        b["label"] = (b.get("label") or "").strip() or f"Path {n + 1}"
+        b["model"] = (b.get("model") or "").strip() or "admin"
+        b["include_in_rating"] = False
     cid = _insert_candidate(con, b)
     con.commit()
     enqueue_sync(sid)
@@ -1318,7 +1471,7 @@ def admin_list_vlm():
     summ, _ = rating_overview(con, s)
     scenes = {r["id"]: r for r in con.execute("SELECT * FROM scenes")}
     out = [_candidate_public(c, scenes.get(c["scene_id"]), summ["items"].get(c["id"]))
-           for c in con.execute("SELECT * FROM candidates ORDER BY created_at DESC")]
+           for c in con.execute("SELECT * FROM candidates WHERE COALESCE(source,'') != 'admin' ORDER BY created_at DESC")]
     return jsonify({"items": out, "questions": s["questions"]})
 
 
@@ -1470,15 +1623,31 @@ def admin_update_drawing(did):
     return jsonify({"ok": True})
 
 
+@app.patch("/api/admin/rankings/<rid>")
+@admin_required
+def admin_update_ranking(rid):
+    con = db()
+    r = con.execute("SELECT scene_id FROM rankings WHERE id=?", (rid,)).fetchone()
+    if not r:
+        abort(404)
+    b = request.get_json(force=True, silent=True) or {}
+    con.execute("UPDATE rankings SET excluded=? WHERE id=?", (int(bool(b.get("excluded"))), rid))
+    bump_scene(con, r["scene_id"])
+    con.commit()
+    enqueue_sync(r["scene_id"])
+    return jsonify({"ok": True})
+
+
 @app.get("/api/admin/participants")
 @admin_required
 def admin_participants():
     con = db()
     s = get_settings(con)
-    n_active = con.execute("SELECT COUNT(*) FROM scenes WHERE active=1").fetchone()[0]
+    n_active = len(_task_scene_ids(con, s))
     rows = []
     for p in con.execute("""SELECT p.*,
-            (SELECT COUNT(*) FROM drawings d WHERE d.participant_id=p.id) nd,
+            ((SELECT COUNT(*) FROM drawings d WHERE d.participant_id=p.id) +
+             (SELECT COUNT(*) FROM rankings k WHERE k.participant_id=p.id)) nd,
             (SELECT COUNT(*) FROM vlm_ratings r WHERE r.participant_id=p.id) nr,
             (SELECT AVG(duration_ms) FROM drawings d WHERE d.participant_id=p.id) avg_ms
             FROM participants p ORDER BY created_at DESC"""):
@@ -1503,7 +1672,8 @@ def admin_update_participant(pid):
         con.execute("UPDATE participants SET excluded=? WHERE id=?", (int(bool(b["excluded"])), pid))
     if b.get("role") in ("team", "survey"):
         con.execute("UPDATE participants SET role=? WHERE id=?", (b["role"], pid))
-    scenes = [r[0] for r in con.execute("SELECT DISTINCT scene_id FROM drawings WHERE participant_id=?", (pid,))]
+    scenes = [r[0] for r in con.execute("SELECT DISTINCT scene_id FROM drawings WHERE participant_id=? UNION "
+                                        "SELECT DISTINCT scene_id FROM rankings WHERE participant_id=?", (pid, pid))]
     for sid in scenes:
         bump_scene(con, sid)
     con.commit()
@@ -1517,8 +1687,10 @@ def admin_update_participant(pid):
 def admin_delete_participant(pid):
     """Remove a participant and everything they submitted (e.g. consent withdrawn)."""
     con = db()
-    scenes = [r[0] for r in con.execute("SELECT DISTINCT scene_id FROM drawings WHERE participant_id=?", (pid,))]
+    scenes = [r[0] for r in con.execute("SELECT DISTINCT scene_id FROM drawings WHERE participant_id=? UNION "
+                                        "SELECT DISTINCT scene_id FROM rankings WHERE participant_id=?", (pid, pid))]
     con.execute("DELETE FROM drawings WHERE participant_id=?", (pid,))
+    con.execute("DELETE FROM rankings WHERE participant_id=?", (pid,))
     con.execute("DELETE FROM vlm_ratings WHERE participant_id=?", (pid,))
     con.execute("DELETE FROM participants WHERE id=?", (pid,))
     for sid in scenes:
@@ -1577,8 +1749,10 @@ def admin_results():
         args.append(split)
     paths = A.model_path_summary([{"scene_id": r["id"], "analysis": scene_analysis(con, r, s)}
                                   for r in con.execute(q, args).fetchall()])
+    paths.pop("admin", None)
     n_uploaded = {r["model"]: r["n"] for r in
-                  con.execute("SELECT model, COUNT(*) n FROM candidates WHERE consensus_override=0 GROUP BY model")}
+                  con.execute("SELECT model, COUNT(*) n FROM candidates WHERE consensus_override=0 "
+                              "AND COALESCE(source,'') != 'admin' GROUP BY model")}
     models = sorted(set(summ["groups"]) | set(paths) | set(n_uploaded), key=lambda m: (m == CONTROL_MODEL, m))
     out = []
     for m in models:

@@ -8,6 +8,9 @@
   const AI_COLOR = "#ff2d87";
   const COMP_COLOR = "#1d2433";
   const modeColor = (m) => (m == null ? OTHER : MODE_COLORS[m] || OTHER);
+  const PATH_COLORS = ["#ff2d87", "#2459ff", "#f2a900", "#00a6a6", "#8b5cf6", "#e4572e", "#5c7c00", "#0f172a",
+                       "#d946ef", "#0891b2", "#a16207", "#be123c"];
+  const pathColor = (i) => PATH_COLORS[i % PATH_COLORS.length];
   const routeName = (m) => (m == null ? "own route" : `Route ${String.fromCharCode(65 + m)}`);
   const $ = (id) => document.getElementById(id);
 
@@ -32,7 +35,19 @@
     $("tau").value = tau; $("tau-val").textContent = `${tau}% of diagonal`;
     $("tau-save").hidden = Math.abs(tau / 100 - settings.cluster_threshold) < 1e-9;
     renderHeader(); renderSummary(); renderNorms(); renderVlm(); renderDrawings(); renderStrip(); renderHeatmap();
-    if (!canvas) buildCanvas(); else refreshOverlays();
+    renderPaths(); renderRankings();
+    const drew = data.drawings.length > 0;
+    for (const id of ["heat-card", "strip-card", "draw-card"]) $(id).hidden = !drew;
+    $("summary").closest(".card").hidden = !drew;   // drawn-path agreement only applies when people draw
+    $("norms").closest(".card").hidden = !drew;
+    for (const id of ["show-humans", "show-compiled"]) $(id).closest("label").hidden = !drew;
+    $("tau").closest(".row").hidden = !drew;
+    if (!canvas) {
+      if (!data.admin_paths.length) {   // nothing to rank yet: open straight in drawing mode
+        const b = $("mode-seg").querySelector('[data-mode="draw"]'); if (b) { b.click(); return; }
+      }
+      buildCanvas();
+    } else refreshOverlays();
   }
 
   function renderHeader() {
@@ -71,11 +86,22 @@
     }
     if ($("show-compiled").checked && comp.curve)
       out.push({ id: "compiled", points: comp.curve, kind: "curve", color: COMP_COLOR, width: 5, label: "C", arrows: true, opacity: dim ? 0.4 : 1, labelAt: 0.3 });
+    if ($("show-admin").checked || mode === "draw") {
+      const rk = data.ranking.paths;
+      let ring = 0;
+      data.admin_paths.forEach((c, i) => {
+        const r = rk[c.id] || {}, num = String(r.overall_rank || i + 1);
+        const o = { id: c.id, color: pathColor(i), label: num, opacity: dim ? 0.45 : 1 };
+        if (c.decision === "wait") out.push({ ...o, decision: "wait", ring: ring++ });
+        else out.push({ ...o, points: c.points, segments: c.segments, style: c.style, kind: c.kind || "waypoints",
+                        width: 4, arrows: true, labelAt: 0.35 + 0.12 * (i % 5) });
+      });
+    }
     if ($("show-ai").checked) {
       let ring = 0;
       data.candidates.forEach((c, i) => {
         const m = c.metrics;
-        if (!m) return;
+        if (!m || c.source === "admin") return;
         if (c.decision === "wait") out.push({ id: c.id, decision: "wait", color: AI_COLOR, label: String(i + 1), ring: ring++, opacity: dim ? 0.4 : 1 });
         else if (m.curve) out.push({ id: c.id, points: m.curve, kind: "curve", color: AI_COLOR, width: 3, dash: "7 5",
                                      label: String(i + 1), opacity: dim ? 0.4 : 1, labelAt: 0.55 + 0.08 * (i % 4) });
@@ -91,8 +117,9 @@
     if (s.n_wait) items.push(`<span>${s.n_wait} chose to wait</span>`);
     if (s.n_outliers) items.push(`<span><span class="swatch" style="background:repeating-linear-gradient(90deg,${OTHER} 0 5px,transparent 5px 9px)"></span>Outlier${s.n_outliers > 1 ? "s" : ""} (${s.n_outliers})</span>`);
     if (comp.curve) items.push(`<span><span class="swatch" style="background:${COMP_COLOR};height:6px"></span>C = compiled path${comp.corridor_left ? ", shaded band = ±1 SD spread" : ""}</span>`);
-    if (data.candidates.some((c) => c.metrics)) items.push(`<span><span class="swatch" style="background:repeating-linear-gradient(90deg,${AI_COLOR} 0 7px,transparent 7px 11px)"></span>Numbered = VLM paths with coordinates</span>`);
-    $("legend").innerHTML = items.join("") || "<span>No paths yet. Share the study link to start collecting.</span>";
+    if (data.admin_paths.length) items.push(`<span>Coloured, numbered = paths to rank${data.ranking.n_rankings ? " (number = overall rank, 1 = best)" : ""}</span>`);
+    if (data.candidates.some((c) => c.metrics && c.source !== "admin")) items.push(`<span><span class="swatch" style="background:repeating-linear-gradient(90deg,${AI_COLOR} 0 7px,transparent 7px 11px)"></span>Numbered = VLM paths with coordinates</span>`);
+    $("legend").innerHTML = items.join("") || "<span>No paths yet. Choose “Draw paths” to add the options people will rank.</span>";
   }
 
   seg($("mode-seg"), (m) => {
@@ -102,7 +129,7 @@
     $("panel-draw").hidden = mode !== "draw";
     buildCanvas();
   });
-  for (const id of ["show-humans", "show-compiled", "show-ai"]) $(id).addEventListener("change", refreshOverlays);
+  for (const id of ["show-humans", "show-compiled", "show-ai", "show-admin"]) $(id).addEventListener("change", refreshOverlays);
   seg($("role-seg"), (v) => { role = v; load(); });
   $("tau").addEventListener("input", (e) => { $("tau-val").textContent = `${e.target.value}% of diagonal`; });
   $("tau").addEventListener("change", (e) => { tau = +e.target.value; load(); });
@@ -127,17 +154,74 @@
   $("c-save").addEventListener("click", async () => {
     const wait = $("c-wait").checked;
     $("c-err").textContent = "";
-    if (!$("c-model").value.trim()) { $("c-err").textContent = "Name the model or method first."; return; }
-    if (!wait && !canvas.hasPath()) { $("c-err").textContent = "Click the image to draw a path, or tick 'chose to wait'."; return; }
+    if (!wait && !canvas.hasPath()) { $("c-err").textContent = "Click the image to draw a path first, or tick 'the robot waits'."; return; }
     const p = wait ? null : canvas.getPath();
     try {
       await api(`/api/admin/scenes/${SID}/candidates`, "POST", {
-        model: $("c-model").value.trim(), source: $("c-source").value, rationale: $("c-rationale").value.trim(),
-        decision: wait ? "wait" : "path", kind: "waypoints", points: p && p.points, segments: p && p.segments, style: p && p.style,
-        consensus_override: $("c-override").checked, include_in_rating: !$("c-override").checked });
-      toast("Path saved"); canvas.clear(); $("c-override").checked = false; $("c-wait").checked = false;
+        source: "admin", label: $("c-label").value.trim(), decision: wait ? "wait" : "path", kind: "waypoints",
+        points: p && p.points, segments: p && p.segments, style: p && p.style });
+      toast("Path saved. Draw the next one."); canvas.clear(); $("c-wait").checked = false; $("c-label").value = "";
       await load();
     } catch (err) { $("c-err").textContent = err.message; }
+  });
+
+  // ---------------------------------------------------------------- paths to rank + rankings
+  function renderPaths() {
+    const rk = data.ranking, paths = data.admin_paths, tbl = $("path-table");
+    const lab = (id) => (rk.paths[id] || {}).label || "?";
+    if (!paths.length) {
+      $("rank-summary").textContent = "";
+      tbl.innerHTML = `<tbody><tr><td class="muted" style="padding:1rem">No paths yet. Choose <b>Draw paths</b> above. Participants only see this photo once it has at least one path.</td></tr></tbody>`;
+      return;
+    }
+    const parts = [`${rk.n_rankings} ranking${rk.n_rankings === 1 ? "" : "s"}`];
+    if (rk.n_rankings && rk.n_complete !== rk.n_rankings) parts.push(`${rk.n_complete} made after the last path was added or removed`);
+    if (rk.best) parts.push(`Best path: <b>${esc(lab(rk.best))}</b>`);
+    else if (rk.all_unacceptable) parts.push('<span class="pill pill-bad">Most raters found every path not socially acceptable</span>');
+    if (rk.kendall_w != null) parts.push(`Agreement between raters (Kendall's W): <b>${num(rk.kendall_w)}</b>`);
+    if (rk.top_agreement != null) parts.push(`${pct(rk.top_agreement)} put the top path first`);
+    $("rank-summary").innerHTML = parts.join(". ") + ".";
+    const rows = paths.map((c, i) => ({ c, i, r: rk.paths[c.id] || {} }))
+      .sort((a, b) => (a.r.overall_rank || 999) - (b.r.overall_rank || 999) || a.i - b.i);
+    tbl.innerHTML = `<thead><tr><th>Rank</th><th>Path</th><th class="num">Ranked by</th><th class="num">Score</th><th class="num">Avg position</th>
+      <th class="num">Ranked best</th><th class="num">Not socially acceptable</th><th></th></tr></thead><tbody>${
+      rows.map(({ c, i, r }) => `<tr data-id="${c.id}">
+        <td><span class="opt-chip" style="background:${pathColor(i)}">${r.overall_rank || i + 1}</span></td>
+        <td><b>${esc(r.label || c.label || "Path")}</b>${c.decision === "wait" ? ' <span class="pill">robot waits</span>' : ""}${c.id === rk.best ? ' <span class="pill pill-ok">best</span>' : ""}</td>
+        <td class="num">${r.n || 0}</td><td class="num">${pct(r.score)}</td><td class="num">${num(r.mean_rank, 1)}</td>
+        <td class="num">${pct(r.first_share)}</td>
+        <td class="num">${r.unacceptable_share >= 0.5 ? `<span class="pill pill-bad">${pct(r.unacceptable_share)}</span>` : pct(r.unacceptable_share)}</td>
+        <td><button class="btn btn-quiet btn-danger" data-del="${c.id}">Delete</button></td></tr>`).join("")}</tbody>`;
+    tbl.querySelectorAll("tr[data-id]").forEach((tr) => {
+      tr.addEventListener("mouseenter", () => { canvas && canvas.highlight(tr.dataset.id); tr.classList.add("is-hot"); });
+      tr.addEventListener("mouseleave", () => { canvas && canvas.highlight(null); tr.classList.remove("is-hot"); });
+    });
+  }
+  $("path-table").addEventListener("click", async (e) => {
+    const id = e.target.dataset.del; if (!id) return;
+    const n = (data.ranking.paths[id] || {}).n || 0;
+    if (!confirm(n ? `Delete this path? ${n} ranking${n === 1 ? " includes" : "s include"} it; those rankings are kept for the other paths.` : "Delete this path?")) return;
+    await api(`/api/admin/candidates/${id}`, "DELETE"); toast("Path deleted"); await load();
+  });
+
+  function renderRankings() {
+    const rows = data.rankings, tbl = $("rank-table");
+    const lab = (id) => (data.ranking.paths[id] || {}).label;
+    if (!rows.length) { tbl.innerHTML = `<tbody><tr><td class="muted" style="padding:1rem">No rankings yet.</td></tr></tbody>`; return; }
+    tbl.innerHTML = `<thead><tr><th>Code</th><th>Name</th><th>Role</th><th>Order, best to worst</th><th>Not socially acceptable</th>
+      <th class="num">Time</th><th>Comment</th><th>Use</th></tr></thead><tbody>${
+      rows.map((r) => `<tr class="${r.excluded ? "is-off" : ""}"><td><b>${esc(r.code)}</b></td><td class="small">${esc(r.name || "")}</td>
+        <td><span class="pill${r.role === "team" ? " pill-ok" : ""}">${roleLabel(r.role)}</span></td>
+        <td class="small">${r.ranking.map((x) => esc(lab(x) || "(deleted)")).join(" › ")}</td>
+        <td class="small">${r.unacceptable.map((x) => esc(lab(x) || "(deleted)")).join(", ") || '<span class="muted">none</span>'}</td>
+        <td class="num">${r.duration_ms ? (r.duration_ms / 1000).toFixed(1) + " s" : "–"}</td>
+        <td class="small" style="max-width:28ch">${esc(r.comment || "")}</td>
+        <td><input type="checkbox" data-rk="${r.id}" ${r.excluded ? "" : "checked"} aria-label="Use in analysis"></td></tr>`).join("")}</tbody>`;
+  }
+  $("rank-table").addEventListener("change", async (e) => {
+    const id = e.target.dataset.rk; if (!id) return;
+    await api(`/api/admin/rankings/${id}`, "PATCH", { excluded: !e.target.checked });
+    toast(e.target.checked ? "Ranking included" : "Ranking left out of the scores"); await load();
   });
 
   // ---------------------------------------------------------------- side panels
@@ -180,9 +264,9 @@
     const yn = settings.questions.find((q) => q.type === "yesno");
     const scales = settings.questions.filter((q) => q.type === "scale");
     const el = $("vlm-grid");
-    $("model-list").innerHTML = [...new Set(data.candidates.map((c) => c.model))].map((m) => `<option value="${esc(m)}">`).join("");
-    if (!data.candidates.length) { el.innerHTML = '<p class="muted small">None yet. Upload them under <a href="/admin#vlm">VLM images</a>, or use <b>Add a path</b> above.</p>'; return; }
-    el.innerHTML = data.candidates.map((c, i) => {
+    const vlmItems = data.candidates.filter((c) => c.source !== "admin");
+    if (!vlmItems.length) { el.innerHTML = '<p class="muted small">None yet. Upload them under <a href="/admin#vlm">VLM images</a>.</p>'; return; }
+    el.innerHTML = vlmItems.map((c, i) => {
       const r = c.ratings || {}, m = c.metrics;
       const sc = scales.map((q) => r[q.key]).filter((v) => v != null);
       return `<a class="vlm-card" href="/admin/vlm/${c.id}" data-id="${c.id}">
