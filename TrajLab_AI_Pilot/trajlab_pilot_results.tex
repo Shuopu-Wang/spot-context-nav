@@ -1,0 +1,81 @@
+% Insert these subsections into Preliminary Results, replacing outdated claims.
+% Uses packages already present in the supplied IEEE document.
+% All values refer to trajlab_dataset_20261015_1552.zip (2026-10-15).
+\subsection{Dataset Audit}
+The October 15 export contains 39 scenes and 155 response records from 19
+contributing participant codes: 145 drawn paths and 10 wait choices, with
+three to six responses per scene. These are single drawn-path or wait
+choices rather than complete rankings of a fixed candidate set. The export
+contains no VLM outputs or VLM questionnaire ratings. We therefore treat
+these data as an initial annotation pilot; the team must still verify which
+records are study responses rather than interface tests.
+
+Under the export's current grouping settings, 10 scenes have two geometric
+route modes, nine include a wait response, and 17 contain more than one
+substantial route-or-wait choice. Personal-space and group/activity tags
+occur in 75 and 39 responses, respectively. These counts indicate diversity
+in the recorded choices, but do not establish that every scene is
+over-constrained or that every alternative route is physically feasible.
+
+\subsection{Reference-Conditioned Drawing Pilot}
+We additionally conducted an exploratory drawing exercise using GPT-6
+Astra Pro in an interactive session. The assistant inspected the scene
+images and existing human overlays, then authored new image-coordinate
+waypoints. Shape-preserving interpolation converted the waypoints to
+cubic B\'ezier curves. The exercise produced 31 movement suggestions and
+eight explicit wait annotations. Because the human drawings were visible,
+this is a reference-conditioned pilot, not a held-out evaluation of our
+proposed in-context ranking method.
+
+For geometric comparison, coordinates were scaled as
+\begin{equation}
+\phi(x,y)=\frac{(Wx,Hy)}{\sqrt{W^2+H^2}},
+\end{equation}
+and discrete Fr\'echet distances were computed using 64-point curves.
+Distances were first averaged over human movement paths within each scene,
+then averaged equally across the 31 scenes with an AI movement suggestion.
+Wait outputs were not assigned geometric distances. The primary analysis
+retained all non-administratively-excluded paths, including flagged
+outliers and endpoint discrepancies.
+
+\begin{table}[t]
+\caption{Exploratory geometric comparison on the same 31 movement scenes.
+Distances are percentages of the image diagonal; lower values indicate
+closer image-space geometry, not greater safety or acceptability.}
+\label{tab:reference_conditioned_pilot}
+\centering
+\begin{tabular}{@{}p{0.75\columnwidth}r@{}}
+\toprule
+\textbf{Comparison} & \textbf{Distance} \\
+\midrule
+AI suggestion to all human paths & 4.12\% \\
+Straight start-to-goal line to human paths & 4.66\% \\
+Human-to-human path pairs & 5.73\% \\
+AI suggestion to nearest human path & 1.51\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The AI suggestions were closer to human drawings than the straight-line
+reference in 16 of 31 scenes, with a scene-averaged distance of 4.12\%
+versus 4.66\% of the image diagonal. The straight line is only a geometric
+sanity check, not a collision-aware shortest-path baseline. Path-versus-wait
+agreement was 120/155 responses (77.4\%); always choosing movement would
+score 145/155 (93.5\%), illustrating the imbalance of the recorded choices.
+The extra wait decisions have not been independently judged preferable.
+
+\subsection{Data Quality and Limitations}
+Three human drawings end more than 1\% of the image diagonal from their
+scene's current goal. One \texttt{fri3} response differs by about 232 pixels
+and accounts for that scene's one-member alternative route. Omitting the
+three endpoint-mismatched drawings changes mean AI--human distance from
+4.12\% to 4.00\%. The cause of the discrepancies must be resolved before
+interpreting all geometric modes as social disagreement.
+
+The exercise measures resemblance to visible references, not generalization,
+ranking accuracy, calibrated confidence, or physical safety. No depth,
+clearance, dynamic collision checking, or robot execution was performed.
+The new suggestions should therefore be treated as image-space candidates
+requiring independent feasibility and acceptability review. A subsequent
+experiment will require frozen scene geometry, explicit waiting semantics,
+recording-level train/test separation, and blinded human evaluation.
