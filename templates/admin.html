@@ -66,6 +66,75 @@
   <div class="table-wrap"><table class="data" id="scene-table"></table></div>
 </section>
 
+<section class="admin-section" id="sec-collect" hidden>
+  <h2>Collect from SCAND</h2>
+  <p class="muted" style="max-width:80ch">Browse converted bag videos, scrub to a good frame, label <b>behavior mode</b> and <b>environment</b>, and save a still. Captures go to a new dataset folder (not the old training images).</p>
+  <p class="small muted" id="collect-dirs" style="margin-top:-.4rem"></p>
+  <div class="card" style="margin-bottom:1rem">
+    <div class="row" style="justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.6rem">
+      <div>
+        <h3 style="margin:0 0 .25rem">Your section</h3>
+        <p class="small muted" style="margin:0" id="collect-section-hint">138 bags split across 4 people — pick yours so the list only shows your range.</p>
+      </div>
+      <div class="seg" id="collect-section" role="group" aria-label="Team section">
+        <button type="button" data-section="1" aria-pressed="false">1 · 0–34</button>
+        <button type="button" data-section="2" aria-pressed="false">2 · 35–69</button>
+        <button type="button" data-section="3" aria-pressed="false">3 · 70–103</button>
+        <button type="button" data-section="4" aria-pressed="false">4 · 104–137</button>
+        <button type="button" data-section="all" aria-pressed="true">All</button>
+      </div>
+    </div>
+  </div>
+  <div class="collect-layout">
+    <aside class="card collect-sidebar">
+      <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:.5rem">
+        <h3 style="margin:0">Videos <span class="muted small" id="collect-video-count"></span></h3>
+        <button type="button" class="btn btn-quiet small" id="collect-refresh">Refresh</button>
+      </div>
+      <input type="search" id="collect-filter" placeholder="Filter bags…" style="margin-bottom:.5rem">
+      <div class="collect-video-list" id="collect-video-list"></div>
+    </aside>
+    <div class="card collect-player-card">
+      <div class="collect-player-wrap">
+        <video id="collect-video" controls playsinline preload="none"></video>
+        <p class="muted" id="collect-empty">Pick a video on the left. Videos appear here as bags finish converting.</p>
+      </div>
+      <div class="row collect-controls" style="margin-top:.75rem;flex-wrap:wrap;align-items:center;gap:.6rem">
+        <span class="small muted">Speed</span>
+        <div class="seg" id="collect-speed" role="group" aria-label="Playback speed">
+          <button type="button" data-v="1" aria-pressed="true">1×</button>
+          <button type="button" data-v="2" aria-pressed="false">2×</button>
+          <button type="button" data-v="4" aria-pressed="false">4×</button>
+          <button type="button" data-v="8" aria-pressed="false">8×</button>
+        </div>
+        <span class="small muted" id="collect-time">0:00 / 0:00</span>
+        <span class="small muted" id="collect-current-name"></span>
+      </div>
+      <fieldset class="field" style="margin:.9rem 0 0">
+        <legend>Behavior modes <span class="muted small">(pick one or more)</span></legend>
+        <div class="collect-modes" id="collect-behavior-modes"></div>
+      </fieldset>
+      <div class="row" style="margin-top:.75rem;flex-wrap:wrap;align-items:flex-end;gap:.75rem">
+        <label class="field" style="flex:1;min-width:180px;margin:0"><span>Environment</span>
+          <input type="text" id="collect-environment" list="collect-env-list" placeholder="e.g. sidewalk, lobby, plaza" autocomplete="off"></label>
+        <datalist id="collect-env-list"></datalist>
+        <label class="field" style="flex:1;min-width:160px;margin:0"><span>Notes (optional)</span>
+          <input type="text" id="collect-notes" placeholder="optional"></label>
+        <button type="button" class="btn btn-primary" id="collect-capture">Take picture</button>
+      </div>
+      <p class="small" id="collect-status" style="margin:.5rem 0 0"></p>
+      <p class="tiny muted" style="margin:.3rem 0 0">Tip: pause on the frame you want, then Take picture. Space toggles play/pause when the player is focused.</p>
+    </div>
+  </div>
+  <div class="card" style="margin-top:1rem">
+    <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:.5rem">
+      <h3 style="margin:0">Captured stills <span class="muted small" id="collect-count"></span></h3>
+      <label class="check" style="padding:0;margin:0"><input type="checkbox" id="collect-this-video-only"><span class="small">This video only</span></label>
+    </div>
+    <div class="collect-gallery" id="collect-gallery"></div>
+  </div>
+</section>
+
 <section class="admin-section" id="sec-vlm" hidden>
   <h2>VLM images</h2>
   <div class="card">
@@ -227,6 +296,7 @@
 
 </main>
 <script src="{{ url_for('static', filename='js/admin_common.js') }}"></script>
+<script src="{{ url_for('static', filename='js/admin_collect.js') }}"></script>
 <script src="{{ url_for('static', filename='js/admin.js') }}"></script>
 </body>
 </html>

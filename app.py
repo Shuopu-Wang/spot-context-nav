@@ -24,6 +24,7 @@ import shutil
 import socket
 import sqlite3
 import string
+import subprocess
 import threading
 import uuid
 import zipfile
@@ -44,7 +45,22 @@ DATA_DIR = Path(os.environ.get("DATA_DIR", BASE / "data")).resolve()
 MEDIA_DIR = DATA_DIR / "media"
 DATASET_DIR = DATA_DIR / "dataset"
 DB_PATH = DATA_DIR / "trajlab.db"
-for d in (DATA_DIR, MEDIA_DIR, MEDIA_DIR / "vlm", MEDIA_DIR / "controls", DATASET_DIR):
+# SCAND bag-video collection (stills go here; separate from the original study dataset).
+SCAND_VIDEOS_DIR = Path(os.environ.get(
+    "SCAND_VIDEOS_DIR", "/robodata/spot-context-nav-fri/scand-videos")).resolve()
+SCAND_DATASET_DIR = Path(os.environ.get(
+    "SCAND_DATASET_DIR", "/robodata/spot-context-nav-fri/scand-dataset")).resolve()
+SCAND_PREVIEWS_DIR = SCAND_VIDEOS_DIR / "previews"
+SCAND_BEHAVIOR_MODES = [
+    "Wait",
+    "Follow",
+    "Overtake",
+    "Merge",
+    "Leave walkway",
+    "Regular Walk",
+]
+for d in (DATA_DIR, MEDIA_DIR, MEDIA_DIR / "vlm", MEDIA_DIR / "controls", DATASET_DIR,
+          SCAND_DATASET_DIR, SCAND_DATASET_DIR / "images", SCAND_PREVIEWS_DIR):
     d.mkdir(parents=True, exist_ok=True)
 
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "changeme")
@@ -188,11 +204,25 @@ CREATE TABLE IF NOT EXISTS vlm_ratings (
     scene_id TEXT, model TEXT, answers TEXT, norms TEXT, comment TEXT, position INTEGER, duration_ms INTEGER,
     rater_drew_scene INTEGER, shown_image TEXT, created_at TEXT NOT NULL, UNIQUE(participant_id, item_ref)
 );
+CREATE TABLE IF NOT EXISTS scand_captures (
+    id TEXT PRIMARY KEY,
+    video_name TEXT NOT NULL,
+    frame_time REAL NOT NULL,
+    behavior_mode TEXT NOT NULL DEFAULT '',
+    environment TEXT NOT NULL DEFAULT '',
+    image_file TEXT NOT NULL,
+    width INTEGER, height INTEGER,
+    notes TEXT DEFAULT '',
+    created_at TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS ix_drawings_scene ON drawings(scene_id);
 CREATE INDEX IF NOT EXISTS ix_cand_scene ON candidates(scene_id);
 CREATE INDEX IF NOT EXISTS ix_vr_item ON vlm_ratings(item_ref);
 CREATE INDEX IF NOT EXISTS ix_part_email ON participants(email);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_part_code ON participants(code);
+CREATE INDEX IF NOT EXISTS ix_scand_video ON scand_captures(video_name);
+CREATE INDEX IF NOT EXISTS ix_scand_behavior ON scand_captures(behavior_mode);
+CREATE INDEX IF NOT EXISTS ix_scand_env ON scand_captures(environment);
 """
 
 MIGRATE_COLUMNS = {
@@ -1560,6 +1590,304 @@ def admin_settings():
         if any(k in ANALYSIS_KEYS for k in b):
             enqueue_all(con)
     return jsonify(get_settings(con))
+
+
+# ---------------------------------------------------------------------------
+# SCAND image collection (bag videos → stills + labels)
+# ---------------------------------------------------------------------------
+
+def _scand_video_sort_key(path: Path):
+    m = re.match(r"^(\d+)", path.stem)
+    return (0, int(m.group(1))) if m else (1, path.stem)
+
+
+def _scand_parse_modes(raw) -> list[str]:
+    """behavior_mode column stores JSON list, or legacy single string."""
+    if raw is None or raw == "":
+        return []
+    if isinstance(raw, list):
+        return [str(x) for x in raw]
+    s = str(raw).strip()
+    if s.startswith("["):
+        try:
+            val = json.loads(s)
+            if isinstance(val, list):
+                return [str(x) for x in val if str(x).strip()]
+        except json.JSONDecodeError:
+            pass
+    # legacy: single label, or pipe/semicolon/comma separated
+    if "|" in s or ";" in s:
+        parts = re.split(r"[|;]", s)
+    elif "," in s and s not in SCAND_BEHAVIOR_MODES:
+        parts = s.split(",")
+    else:
+        parts = [s]
+    return [p.strip() for p in parts if p.strip()]
+
+
+def _scand_normalize_modes(raw_modes) -> list[str]:
+    """Keep allowed modes only, preserve SCAND_BEHAVIOR_MODES order, unique."""
+    wanted = set()
+    for m in raw_modes or []:
+        m = str(m).strip()
+        if m in SCAND_BEHAVIOR_MODES:
+            wanted.add(m)
+    return [m for m in SCAND_BEHAVIOR_MODES if m in wanted]
+
+
+def _scand_capture_public(row) -> dict:
+    modes = _scand_parse_modes(row["behavior_mode"])
+    return {
+        "id": row["id"],
+        "video_name": row["video_name"],
+        "frame_time": row["frame_time"],
+        "behavior_mode": " | ".join(modes),
+        "behavior_modes": modes,
+        "environment": row["environment"] or "",
+        "notes": row["notes"] or "",
+        "width": row["width"],
+        "height": row["height"],
+        "created_at": row["created_at"],
+        "image_url": f"/api/admin/collect/images/{row['image_file']}",
+        "image_file": row["image_file"],
+    }
+
+
+def _scand_rewrite_manifest(con):
+    """Keep a flat CSV + JSONL next to the images for use outside the app."""
+    rows = con.execute(
+        "SELECT * FROM scand_captures ORDER BY created_at, id"
+    ).fetchall()
+    csv_path = SCAND_DATASET_DIR / "manifest.csv"
+    jsonl_path = SCAND_DATASET_DIR / "manifest.jsonl"
+    cols = ["id", "video_name", "frame_time", "behavior_modes", "behavior_mode",
+            "environment", "image_file", "width", "height", "notes", "created_at"]
+    with csv_path.open("w", encoding="utf-8") as f:
+        f.write(",".join(cols) + "\n")
+        for r in rows:
+            modes = _scand_parse_modes(r["behavior_mode"])
+            vals = []
+            for c in cols:
+                if c == "behavior_modes":
+                    s = "|".join(modes)
+                elif c == "behavior_mode":
+                    s = " | ".join(modes)
+                else:
+                    v = r[c]
+                    s = "" if v is None else str(v)
+                if any(ch in s for ch in ',\"\n'):
+                    s = '"' + s.replace('"', '""') + '"'
+                vals.append(s)
+            f.write(",".join(vals) + "\n")
+    with jsonl_path.open("w", encoding="utf-8") as f:
+        for r in rows:
+            modes = _scand_parse_modes(r["behavior_mode"])
+            rec = {c: r[c] for c in ("id", "video_name", "frame_time", "environment",
+                                     "image_file", "width", "height", "notes", "created_at")}
+            rec["behavior_modes"] = modes
+            rec["behavior_mode"] = " | ".join(modes)
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+
+@app.get("/api/admin/collect/videos")
+@admin_required
+def admin_collect_videos():
+    con = db()
+    counts = {r["video_name"]: r["n"] for r in con.execute(
+        "SELECT video_name, COUNT(*) n FROM scand_captures GROUP BY video_name")}
+    videos = []
+    if SCAND_VIDEOS_DIR.is_dir():
+        for p in sorted(SCAND_VIDEOS_DIR.glob("*.mp4"), key=_scand_video_sort_key):
+            if ".partial." in p.name:
+                continue
+            preview = SCAND_PREVIEWS_DIR / p.name
+            has_preview = preview.is_file() and preview.stat().st_size > 0
+            videos.append({
+                "name": p.name,
+                "stem": p.stem,
+                "size_mb": round(p.stat().st_size / 1e6, 1),
+                "preview_mb": round(preview.stat().st_size / 1e6, 1) if has_preview else None,
+                # Prefer lightweight preview for scrubbing in the browser.
+                "url": (f"/api/admin/collect/previews/{p.name}" if has_preview
+                        else f"/api/admin/collect/videos/{p.name}"),
+                "full_url": f"/api/admin/collect/videos/{p.name}",
+                "has_preview": has_preview,
+                "n_captures": counts.get(p.name, 0),
+            })
+    labels = {
+        "behavior_modes": list(SCAND_BEHAVIOR_MODES),
+        "environments": [r[0] for r in con.execute(
+            "SELECT DISTINCT environment FROM scand_captures "
+            "WHERE environment != '' ORDER BY environment")],
+    }
+    return jsonify({
+        "videos": videos,
+        "videos_dir": str(SCAND_VIDEOS_DIR),
+        "dataset_dir": str(SCAND_DATASET_DIR),
+        "n_captures": con.execute("SELECT COUNT(*) FROM scand_captures").fetchone()[0],
+        "labels": labels,
+    })
+
+
+def _scand_safe_mp4_name(name: str) -> str:
+    safe = Path(secure_filename(name)).name
+    if not safe.endswith(".mp4") or safe != name or ".partial." in safe:
+        abort(404)
+    return safe
+
+
+@app.get("/api/admin/collect/videos/<name>")
+@admin_required
+def admin_collect_video_file(name):
+    safe = _scand_safe_mp4_name(name)
+    path = SCAND_VIDEOS_DIR / safe
+    if not path.is_file():
+        abort(404)
+    return send_file(path, mimetype="video/mp4", conditional=True)
+
+
+@app.get("/api/admin/collect/previews/<name>")
+@admin_required
+def admin_collect_preview_file(name):
+    safe = _scand_safe_mp4_name(name)
+    path = SCAND_PREVIEWS_DIR / safe
+    if not path.is_file():
+        abort(404)
+    return send_file(path, mimetype="video/mp4", conditional=True)
+
+
+@app.get("/api/admin/collect/images/<name>")
+@admin_required
+def admin_collect_image_file(name):
+    safe = Path(secure_filename(name)).name
+    if safe != name or Path(safe).suffix.lower() not in IMAGE_EXT:
+        abort(404)
+    return send_from_directory(SCAND_DATASET_DIR / "images", safe, max_age=3600)
+
+
+@app.get("/api/admin/collect/captures")
+@admin_required
+def admin_collect_list_captures():
+    con = db()
+    video = request.args.get("video") or ""
+    q = "SELECT * FROM scand_captures"
+    args: list = []
+    if video:
+        q += " WHERE video_name=?"
+        args.append(video)
+    q += " ORDER BY created_at DESC LIMIT 500"
+    return jsonify([_scand_capture_public(r) for r in con.execute(q, args).fetchall()])
+
+
+def _scand_extract_frame(video_path: Path, frame_time: float, dest: Path) -> tuple[int, int]:
+    """Seek the full-res MP4 and write one JPEG (keeps browse previews small)."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        "ffmpeg", "-y", "-loglevel", "error",
+        "-ss", f"{max(0.0, frame_time):.3f}",
+        "-i", str(video_path),
+        "-frames:v", "1",
+        "-q:v", "2",
+        str(dest),
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0 or not dest.is_file():
+        raise BadRequest(f"could not extract frame: {proc.stderr[-500:] if proc.stderr else 'ffmpeg failed'}")
+    with Image.open(dest) as im:
+        return im.size
+
+
+@app.post("/api/admin/collect/capture")
+@admin_required
+def admin_collect_capture():
+    """Save a still labeled with behavior_mode + environment.
+
+    Prefer server-side extract from the full MP4 (form fields only). A browser
+    `frame` upload is still accepted as a fallback.
+    """
+    form = request.form
+    video_name = (form.get("video_name") or "").strip()
+    safe_video = Path(secure_filename(video_name)).name
+    if not video_name or safe_video != video_name or not video_name.endswith(".mp4"):
+        raise BadRequest("valid video_name required (e.g. 12.mp4)")
+    video_path = SCAND_VIDEOS_DIR / video_name
+    if not video_path.is_file():
+        raise BadRequest(f"video not found: {video_name}")
+    try:
+        frame_time = float(form.get("frame_time", "0"))
+    except ValueError:
+        raise BadRequest("frame_time must be a number")
+    # Accept repeated behavior_modes fields, JSON list, or legacy behavior_mode.
+    raw_modes = form.getlist("behavior_modes") if hasattr(form, "getlist") else []
+    if not raw_modes and form.get("behavior_modes"):
+        try:
+            parsed = json.loads(form.get("behavior_modes"))
+            raw_modes = parsed if isinstance(parsed, list) else [form.get("behavior_modes")]
+        except json.JSONDecodeError:
+            raw_modes = [form.get("behavior_modes")]
+    if not raw_modes and form.get("behavior_mode"):
+        raw_modes = _scand_parse_modes(form.get("behavior_mode"))
+    modes = _scand_normalize_modes(raw_modes)
+    environment = (form.get("environment") or "").strip()[:200]
+    notes = (form.get("notes") or "").strip()[:2000]
+    if not modes:
+        raise BadRequest(
+            "select at least one behavior mode: " + ", ".join(SCAND_BEHAVIOR_MODES)
+        )
+    if not environment:
+        raise BadRequest("environment is required")
+    behavior = json.dumps(modes)
+
+    cid = new_id()
+    image_name = f"{cid}.jpg"
+    dest = SCAND_DATASET_DIR / "images" / image_name
+
+    if "frame" in request.files and request.files["frame"].filename:
+        tmp = SCAND_DATASET_DIR / "images" / f"{cid}.upload"
+        request.files["frame"].save(tmp)
+        try:
+            with Image.open(tmp) as im:
+                rgb = im.convert("RGB")
+                w, h = rgb.size
+                rgb.save(dest, format="JPEG", quality=92)
+        except Exception:
+            dest.unlink(missing_ok=True)
+            raise BadRequest("could not read captured frame")
+        finally:
+            tmp.unlink(missing_ok=True)
+    else:
+        try:
+            w, h = _scand_extract_frame(video_path, frame_time, dest)
+        except BadRequest:
+            dest.unlink(missing_ok=True)
+            raise
+
+    con = db()
+    con.execute(
+        """INSERT INTO scand_captures
+           (id, video_name, frame_time, behavior_mode, environment, image_file,
+            width, height, notes, created_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?)""",
+        (cid, video_name, frame_time, behavior, environment, image_name, w, h, notes, now()),
+    )
+    con.commit()
+    _scand_rewrite_manifest(con)
+    row = con.execute("SELECT * FROM scand_captures WHERE id=?", (cid,)).fetchone()
+    return jsonify(_scand_capture_public(row))
+
+
+@app.delete("/api/admin/collect/captures/<cid>")
+@admin_required
+def admin_collect_delete(cid):
+    con = db()
+    row = con.execute("SELECT * FROM scand_captures WHERE id=?", (cid,)).fetchone()
+    if not row:
+        abort(404)
+    con.execute("DELETE FROM scand_captures WHERE id=?", (cid,))
+    con.commit()
+    (SCAND_DATASET_DIR / "images" / row["image_file"]).unlink(missing_ok=True)
+    _scand_rewrite_manifest(con)
+    return jsonify({"deleted": cid})
 
 
 @app.get("/api/admin/results")

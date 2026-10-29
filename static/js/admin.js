@@ -14,12 +14,13 @@
   }
 
   // ---------------------------------------------------------------- tabs
-  const TABS = ["overview", "images", "vlm", "results", "people", "data", "settings"];
+  const TABS = ["overview", "images", "collect", "vlm", "results", "people", "data", "settings"];
   function route() {
     const tab = TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "overview";
     TABS.forEach((t) => { $(`sec-${t}`).hidden = t !== tab; });
     document.querySelectorAll(".admin-nav a.tab").forEach((a) => a.classList.toggle("is-active", a.hash === `#${tab}`));
     if (tab === "images") loadSummaries();
+    if (tab === "collect" && window.AdminCollect) AdminCollect.load();
     if (tab === "vlm") loadVlm();
     if (tab === "results") loadResults();
     if (tab === "people") loadPeople();

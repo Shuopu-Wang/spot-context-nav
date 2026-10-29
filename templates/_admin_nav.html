@@ -2,6 +2,7 @@
   <a class="brand" href="/admin"><img src="{{ url_for('static', filename='favicon.svg') }}" width="22" height="22" alt="">TrajLab</a>
   <a class="tab{% if active == 'overview' %} is-active{% endif %}" href="/admin#overview">Overview</a>
   <a class="tab{% if active == 'images' %} is-active{% endif %}" href="/admin#images">Training images</a>
+  <a class="tab{% if active == 'collect' %} is-active{% endif %}" href="/admin#collect">Collect</a>
   <a class="tab{% if active == 'vlm' %} is-active{% endif %}" href="/admin#vlm">VLM images</a>
   <a class="tab" href="/admin#results">Results</a>
   <a class="tab" href="/admin#people">Participants</a>
