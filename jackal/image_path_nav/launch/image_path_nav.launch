@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<!--
+  Default dry-run launch. Does NOT publish to /cmd_vel.
+  Unobstructed-floor prototype — no obstacle avoidance.
+
+  Prerequisites: roscore, jackal base, ZED publishing rgb+depth, TF odom->optical.
+-->
+<launch>
+  <arg name="allow_cmd_vel" default="false"/>
+  <arg name="web_host" default="127.0.0.1"/>
+  <arg name="web_port" default="8080"/>
+  <arg name="config" default="$(find image_path_nav)/config/default.yaml"/>
+
+  <node pkg="image_path_nav" type="path_follower_node.py" name="image_path_follower" output="screen">
+    <rosparam file="$(arg config)" command="load"/>
+    <param name="allow_cmd_vel" value="$(arg allow_cmd_vel)"/>
+  </node>
+
+  <node pkg="image_path_nav" type="image_path_nav_node.py" name="image_path_nav" output="screen">
+    <rosparam file="$(arg config)" command="load"/>
+    <param name="web_host" value="$(arg web_host)"/>
+    <param name="web_port" value="$(arg web_port)"/>
+  </node>
+</launch>

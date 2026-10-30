@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<!--
+  Explicitly enables live cmd_vel publishing to twist_mux external input (/cmd_vel).
+  Still starts DISARMED — you must arm + execute from the UI or ROS API.
+
+  WARNING: Unobstructed-floor prototype. No obstacle avoidance.
+  Keep a teleop override / e-stop ready. Joystick mux priority > external.
+-->
+<launch>
+  <arg name="web_host" default="127.0.0.1"/>
+  <arg name="web_port" default="8080"/>
+
+  <include file="$(find image_path_nav)/launch/image_path_nav.launch">
+    <arg name="allow_cmd_vel" value="true"/>
+    <arg name="web_host" value="$(arg web_host)"/>
+    <arg name="web_port" value="$(arg web_port)"/>
+  </include>
+</launch>

@@ -1,0 +1,7 @@
+# Arm or disarm motion publishing. Arming alone does not start motion.
+bool armed
+---
+bool success
+string message
+bool armed
+bool allow_cmd_vel

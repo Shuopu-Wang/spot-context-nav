@@ -1,0 +1,126 @@
+:root {
+  --bg: #12151a;
+  --panel: #1c222b;
+  --text: #e8eef5;
+  --muted: #9aa7b5;
+  --accent: #3d9cf0;
+  --warn: #e0a106;
+  --bad: #e05555;
+  --ok: #3cbf7a;
+  --banner: #5a3a10;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+header {
+  padding: 0.75rem 1.25rem;
+  border-bottom: 1px solid #2a3340;
+}
+header h1 {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 600;
+}
+.banner {
+  margin: 0.35rem 0 0;
+  padding: 0.35rem 0.6rem;
+  display: inline-block;
+  background: var(--banner);
+  color: #ffd89a;
+  font-size: 0.8rem;
+  border-radius: 4px;
+}
+.deadman-banner {
+  margin: 0;
+  padding: 0.45rem 1.25rem;
+  background: #1a2836;
+  color: #b8c9da;
+  font-size: 0.8rem;
+  border-bottom: 1px solid #2a3340;
+}
+.status-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.25rem;
+  padding: 0.6rem 1.25rem;
+  background: var(--panel);
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.status-bar .ok { color: var(--ok); }
+.status-bar .bad { color: var(--bad); }
+.status-bar .warn { color: var(--warn); }
+
+main {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: 1rem;
+  padding: 1rem 1.25rem 2rem;
+}
+@media (max-width: 900px) {
+  main { grid-template-columns: 1fr; }
+}
+.viewport {
+  background: #0b0d10;
+  border-radius: 8px;
+  padding: 0.75rem;
+}
+#canvas {
+  width: 100%;
+  height: auto;
+  background: #000;
+  cursor: crosshair;
+  display: block;
+  border-radius: 4px;
+}
+.hint {
+  color: var(--muted);
+  font-size: 0.8rem;
+  margin: 0.6rem 0 0;
+}
+aside .controls {
+  display: grid;
+  gap: 0.45rem;
+}
+button {
+  appearance: none;
+  border: 0;
+  border-radius: 6px;
+  padding: 0.55rem 0.75rem;
+  background: var(--accent);
+  color: #061018;
+  font-weight: 600;
+  cursor: pointer;
+}
+button.secondary { background: #314052; color: var(--text); }
+button.arm { background: var(--warn); color: #1a1200; }
+button.danger { background: var(--bad); color: #fff; }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+.mode {
+  margin: 0.85rem 0;
+  display: grid;
+  gap: 0.35rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+#log {
+  background: #0b0d10;
+  border-radius: 6px;
+  padding: 0.6rem;
+  min-height: 8rem;
+  max-height: 18rem;
+  overflow: auto;
+  font-size: 0.75rem;
+  white-space: pre-wrap;
+  color: #c5d0db;
+}
+#projMeta {
+  margin-top: 0.75rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}

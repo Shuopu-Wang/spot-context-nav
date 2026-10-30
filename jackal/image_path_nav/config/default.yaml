@@ -1,0 +1,55 @@
+# Unobstructed-floor prototype defaults. Not obstacle-aware.
+
+# Camera topics (ZED-2i, RGB-aligned depth)
+rgb_topic: /zed2i/zed_node/rgb/image_rect_color
+depth_topic: /zed2i/zed_node/depth/depth_registered
+camera_info_topic: /zed2i/zed_node/rgb/camera_info
+optical_frame: ''   # empty -> use image header frame_id
+path_frame: odom
+
+# Projection
+min_depth_m: 0.3
+max_depth_m: 8.0
+floor_z_tolerance_m: 0.35
+max_gap_m: 2.5
+resample_spacing_m: 0.15
+require_all_valid: false
+
+# Follower (conservative)
+linear_speed_mps: 0.4
+max_angular_speed_rps: 0.8
+goal_tolerance_m: 0.15
+lookahead_m: 0.35
+slowdown_distance_m: 0.4
+heading_align_rad: 0.6
+stale_odom_timeout_s: 0.5
+no_progress_timeout_s: 8.0
+control_rate_hz: 20.0
+
+# Safety
+allow_cmd_vel: false
+# Spektrum DXS path: publish to /navigation/cmd_vel; the AMRL joystick node only
+# forwards that to /cmd_vel while the TX is in AUTONOMOUS (D-switch).
+# Do NOT publish directly to /cmd_vel — that bypasses the Spektrum auto/manual gate.
+cmd_vel_topic: /navigation/cmd_vel
+cmd_vel_dryrun_topic: /image_path_nav/cmd_vel_dryrun
+odom_topic: /odometry/filtered
+ui_heartbeat_timeout_s: 1.5
+require_ui_heartbeat: true
+
+# Require Spektrum autonomous mode (/autonomy_arbiter/enabled from joystick node).
+# D-switch (axis 6): positive = Autonomous, negative = Manual, center = Stopped.
+require_autonomy_enabled: true
+autonomy_enabled_topic: /autonomy_arbiter/enabled
+
+# Optional extra button deadman (PS4). Off by default for Spektrum DXS.
+require_deadman: false
+deadman_joy_topic: /joystick
+deadman_button_index: -1
+deadman_timeout_s: 0.35
+deadman_hint: 'Spektrum D-switch in AUTONOMOUS'
+
+# Web UI (bind localhost for SSH -L forwarding)
+web_host: 127.0.0.1
+web_port: 8080
+jpeg_quality: 80

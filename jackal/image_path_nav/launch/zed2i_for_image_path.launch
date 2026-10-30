@@ -1,0 +1,42 @@
+<?xml version="1.0"?>
+<!--
+  Optional ZED-only bringup for this prototype.
+  Disables ZED odom/map TF so Jackal EKF keeps owning odom->base_link.
+  Do not start if another zed_node is already running.
+-->
+<launch>
+  <arg name="cam_pos_x" default="0.0"/>
+  <arg name="cam_pos_y" default="0.0"/>
+  <arg name="cam_pos_z" default="0.0"/>
+  <arg name="cam_roll" default="0.0"/>
+  <arg name="cam_pitch" default="0.0"/>
+  <arg name="cam_yaw" default="0.0"/>
+
+  <group ns="zed2i">
+    <param name="zed2i_description"
+           command="$(find xacro)/xacro '$(find zed_wrapper)/urdf/zed_descr.urdf.xacro'
+                    camera_name:=zed2i
+                    camera_model:=zed2i
+                    base_frame:=base_link
+                    cam_pos_x:=$(arg cam_pos_x)
+                    cam_pos_y:=$(arg cam_pos_y)
+                    cam_pos_z:=$(arg cam_pos_z)
+                    cam_roll:=$(arg cam_roll)
+                    cam_pitch:=$(arg cam_pitch)
+                    cam_yaw:=$(arg cam_yaw)" />
+    <node name="zed2i_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher" output="screen">
+      <remap from="robot_description" to="zed2i_description"/>
+    </node>
+
+    <node name="zed_node" pkg="zed_wrapper" type="zed_wrapper_node" output="screen">
+      <rosparam file="$(find zed_wrapper)/params/common.yaml" command="load"/>
+      <rosparam file="$(find zed_wrapper)/params/zed2i.yaml" command="load"/>
+      <param name="general/camera_name" value="zed2i"/>
+      <param name="general/base_frame" value="base_link"/>
+      <!-- Critical: do not fight Jackal EKF on odom->base_link -->
+      <param name="pos_tracking/publish_tf" value="false"/>
+      <param name="pos_tracking/publish_map_tf" value="false"/>
+      <param name="sensors/publish_imu_tf" value="true"/>
+    </node>
+  </group>
+</launch>

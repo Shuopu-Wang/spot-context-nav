@@ -1,0 +1,7 @@
+logs/
+*.gv
+*.pdf
+*.bag
+__pycache__/
+*.pyc
+.ros_log_*/

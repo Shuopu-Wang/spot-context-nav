@@ -1,0 +1,10 @@
+# Freeze the latest synchronized RGB + depth + camera_info + capture-time TF.
+---
+bool success
+string message
+string capture_id
+uint32 image_width
+uint32 image_height
+time capture_stamp
+string optical_frame
+string path_frame

@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Jackal Image Path Nav</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header>
+    <h1>Jackal Image Path Nav</h1>
+    <p class="banner">UNOBSTRUCTED-FLOOR PROTOTYPE — no obstacle avoidance</p>
+  </header>
+
+  <section class="status-bar" id="statusBar">
+    <span id="sCamera">camera: —</span>
+    <span id="sOdom">odom: —</span>
+    <span id="sTf">tf: —</span>
+    <span id="sCapture">capture: —</span>
+    <span id="sArmed">armed: —</span>
+    <span id="sDeadman">deadman: —</span>
+    <span id="sState">state: —</span>
+  </section>
+  <p class="deadman-banner" id="deadmanBanner">Live motion requires Spektrum <strong>D-switch in AUTONOMOUS</strong>. Flip out of autonomous to stop. Manual/teleop still overrides.</p>
+
+  <main>
+    <div class="viewport">
+      <canvas id="canvas" width="480" height="270"></canvas>
+      <p class="hint">Freeze a frame, then click waypoints in order (or drag to draw). Path uses capture-time depth — not the live stream. <span id="depthHint">Green = usable depth, magenta = invalid (click green regions).</span></p>
+    </div>
+
+    <aside>
+      <div class="controls">
+        <button id="btnLive" class="secondary">Show live</button>
+        <button id="btnCapture">Capture / freeze</button>
+        <button id="btnDepthValid" class="secondary">Show valid depth</button>
+        <button id="btnClear" class="secondary">Clear path</button>
+        <button id="btnProject">Project preview</button>
+        <button id="btnArm" class="arm">Arm</button>
+        <button id="btnExecute" class="danger">Execute</button>
+        <button id="btnStop" class="danger">Stop / disarm</button>
+      </div>
+      <div class="mode">
+        <label><input type="radio" name="mode" value="click" checked /> Click waypoints</label>
+        <label><input type="radio" name="mode" value="draw" /> Draw path</label>
+      </div>
+      <pre id="log"></pre>
+      <div id="projMeta"></div>
+    </aside>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

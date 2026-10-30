@@ -1,0 +1,10 @@
+# Project an ordered pixel path through a stored capture into path_frame.
+image_path_nav/PixelPath pixel_path
+bool publish_result   # if true, publish /image_path_nav/path and markers
+---
+bool success
+string message
+nav_msgs/Path path
+string[] point_statuses   # ok|invalid_depth|out_of_range|not_floor|oob per input point
+uint32 accepted_count
+uint32 rejected_count

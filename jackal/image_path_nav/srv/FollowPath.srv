@@ -1,0 +1,10 @@
+# Replace (or clear) the active physical path. Requires armed=true and
+# allow_cmd_vel=true to publish live twists. Empty path cancels.
+nav_msgs/Path path
+bool execute   # if false, load/preview only; if true, start following when armed
+---
+bool success
+string message
+string state
+uint32 waypoint_count
+float64 path_length_m
