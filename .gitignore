@@ -1,6 +1,9 @@
-data/
+# Website runtime DB / uploaded media
+website/data/
+
 __pycache__/
 *.pyc
 .venv/
 venv/
 *.zip
+.DS_Store

@@ -1,0 +1,20 @@
+# Blueprint when the Render service root is this folder (website/).
+# Prefer the repo-root render.yaml when the GitHub repo is the monorepo.
+# https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: trajlab
+    runtime: docker
+    plan: starter
+    healthCheckPath: /healthz
+    disk:
+      name: trajlab-data
+      mountPath: /data
+      sizeGB: 2
+    envVars:
+      - key: DATA_DIR
+        value: /data
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
